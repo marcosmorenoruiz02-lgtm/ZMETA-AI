@@ -122,9 +122,9 @@ backend:
 
   - task: "POST /api/analyze-and-generate - Modo Tematica (topic scraping)"
     implemented: true
-    working: false
+    working: true
     file: "app/api/[[...path]]/route.js"
-    stuck_count: 1
+    stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
@@ -134,6 +134,9 @@ backend:
         -working: false
         -agent: "testing"
         -comment: "❌ CRITICAL BUG - Returns HTTP 404 'No se encontraron tweets'. Root cause identified: Line 98 constructs query as '${query} min_faves:${minFaves} -filter:replies' but Twitter API does NOT support min_faves operator. Direct API test confirms: query 'Inteligencia Artificial' returns 19 tweets, but 'Inteligencia Artificial min_faves:100 -filter:replies' returns 0 tweets. FIX: Remove min_faves and -filter:replies operators from query string (line 98). The backend already filters by engagement after fetching (lines 233-235), so the operator is redundant and breaking functionality."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Retested after fix. TEST 1: Query 'Inteligencia Artificial' with minFaves=100 returns HTTP 200 in 28.79s. Response contains 10 originalTweets (all with likes >= 100, range: 102-8077) and analysis.generatedTweets with EXACTLY 3 items (each with style/text/rationale). TEST 2: Query 'SaaS' with minFaves=100 returns HTTP 200 in 16.80s with same valid structure. Both tests passed all validations. The min_faves filtering is now working correctly - all returned tweets meet the minimum likes requirement."
 
   - task: "Integracion Gemini 2.5 Flash via proxy Emergent (JSON estructurado)"
     implemented: true
@@ -185,10 +188,8 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "POST /api/analyze-and-generate - Modo Tematica (topic scraping)"
-  stuck_tasks:
-    - "POST /api/analyze-and-generate - Modo Tematica (topic scraping)"
+  current_focus: []
+  stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
@@ -197,3 +198,5 @@ agent_communication:
     -message: "Backend implementado. Probar los dos modos del endpoint POST /api/analyze-and-generate. Modo user usar query '@MorrrMorrr63705'. Modo topic usar query 'Inteligencia Artificial' con minFaves 100. Verificar que la respuesta contiene originalTweets (array no vacio) y analysis.generatedTweets con exactamente 3 elementos, cada uno con style/text/rationale. Las claves ya estan en .env (TWITTER_API_IO_KEY, EMERGENT_LLM_KEY). No probar frontend todavia."
     -agent: "testing"
     -message: "Backend testing completed. RESULTS: ✅ MODE USER working (200, userInfo, 1 tweet, 3 generated tweets). ✅ Gemini integration working (exactly 3 generated tweets with style/text/rationale). ✅ Validation working (400 for invalid type/missing query). ✅ History endpoint working (200, array). ❌ MODE TOPIC BROKEN - Critical bug in line 98 of route.js: Twitter API does NOT support 'min_faves:' operator. Query 'Inteligencia Artificial min_faves:100 -filter:replies' returns 0 tweets, but 'Inteligencia Artificial' alone returns 19 tweets. FIX REQUIRED: Remove min_faves and -filter:replies from query construction (line 98). Backend already filters by engagement post-fetch (lines 233-235), so operator is redundant."
+    -agent: "testing"
+    -message: "MODE TOPIC RETEST COMPLETED ✅ - Both test scenarios PASSED. Query 'Inteligencia Artificial' (minFaves=100): HTTP 200 in 28.79s, 10 tweets (all with likes >= 100), 3 generated tweets. Query 'SaaS' (minFaves=100): HTTP 200 in 16.80s, 10 tweets, 3 generated tweets. All validations passed: originalTweets is non-empty array with text/likes/retweets/replies/views, analysis.generatedTweets has EXACTLY 3 items with style/text/rationale. The min_faves filtering is working correctly. ALL BACKEND TESTS NOW PASSING. Ready for main agent to summarize and finish."

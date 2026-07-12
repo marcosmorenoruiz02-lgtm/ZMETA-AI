@@ -95,13 +95,13 @@ async function getUserData(userName) {
 }
 
 async function getTopicData(query, minFaves) {
-  const q = `${query} min_faves:${minFaves} -filter:replies`
+  const q = `${query} min_faves:${minFaves}`
   const res = await twitterGet('/twitter/tweet/advanced_search', {
     query: q,
-    queryType: 'Top',
+    queryType: 'Latest',
   })
   const rawTweets = res?.tweets || []
-  return rawTweets.filter((t) => t?.text).map((t) => normalizeTweet(t))
+  return rawTweets.filter((t) => t?.text && !t?.isReply).map((t) => normalizeTweet(t))
 }
 
 // ----------------------------- Gemini -----------------------------
