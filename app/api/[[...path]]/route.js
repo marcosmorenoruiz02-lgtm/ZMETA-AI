@@ -1,6 +1,7 @@
 import { MongoClient } from 'mongodb'
 import { v4 as uuidv4 } from 'uuid'
 import { NextResponse } from 'next/server'
+import { buildAlerts } from '@/lib/constants/alerts'
 
 // ----------------------------- MongoDB -----------------------------
 let client
@@ -34,6 +35,26 @@ const TWITTER_BASE = 'https://api.twitterapi.io'
 const LLM_KEY = process.env.EMERGENT_LLM_KEY
 const LLM_BASE = process.env.EMERGENT_LLM_BASE_URL || 'https://integrations.emergentagent.com/llm'
 const LLM_MODEL = 'gemini/gemini-2.5-flash'
+
+// ----------------------------- Metrics (Tiempo Recuperado) -----------------------------
+// H_saved = posts * 0.5 + diagnostics * 0.25 (horas)
+async function getMetrics(database) {
+  const doc = await database.collection('metrics').findOne({ _id: 'global' })
+  const posts = doc?.posts || 0
+  const diagnostics = doc?.diagnostics || 0
+  return {
+    posts,
+    diagnostics,
+    hours_saved: Math.round((posts * 0.5 + diagnostics * 0.25) * 100) / 100,
+  }
+}
+
+async function bumpMetrics(database, posts = 0, diagnostics = 0) {
+  await database
+    .collection('metrics')
+    .updateOne({ _id: 'global' }, { $inc: { posts, diagnostics } }, { upsert: true })
+  return getMetrics(database)
+}
 
 // ----------------------------- Helpers -----------------------------
 function normalizeTweet(t, fallbackAuthor = null) {
@@ -130,6 +151,11 @@ FASE 2 - INGENIERÍA INVERSA VIRAL: Genera EXACTAMENTE 3 propuestas de tweets nu
   2. Un Tweet Provocativo / Opinión (opinión contundente que genere debate)
   3. Un Tweet Directo / Gancho corto (una sola línea potente e impactante)
 
+Para CADA tweet generado calcula además un SCORE DE VIRALIDAD PREDICTIVO realista:
+  - hookStrength: entero 0-100 (fuerza del gancho en la primera línea)
+  - retention: "Alta" | "Media" | "Baja" (retención estimada del lector)
+  - weakPoint: una frase corta señalando el punto débil o mayor área de mejora del tweet
+
 Responde ÚNICAMENTE con un objeto JSON válido con esta estructura EXACTA (en español):
 {
   "patternAnalysis": {
@@ -141,16 +167,16 @@ Responde ÚNICAMENTE con un objeto JSON válido con esta estructura EXACTA (en e
     "keyPatterns": ["patrón 1", "patrón 2", "patrón 3", "patrón 4"]
   },
   "generatedTweets": [
-    { "style": "Educativo / Lista", "text": "texto del tweet listo para publicar", "rationale": "por qué este funcionará" },
-    { "style": "Provocativo / Opinión", "text": "texto del tweet listo para publicar", "rationale": "por qué este funcionará" },
-    { "style": "Directo / Gancho corto", "text": "texto del tweet listo para publicar", "rationale": "por qué este funcionará" }
+    { "style": "Educativo / Lista", "text": "texto listo para publicar", "rationale": "por qué funcionará", "hookStrength": 87, "retention": "Alta", "weakPoint": "El segundo párrafo rompe la curiosidad." },
+    { "style": "Provocativo / Opinión", "text": "texto listo para publicar", "rationale": "por qué funcionará", "hookStrength": 82, "retention": "Media", "weakPoint": "..." },
+    { "style": "Directo / Gancho corto", "text": "texto listo para publicar", "rationale": "por qué funcionará", "hookStrength": 90, "retention": "Alta", "weakPoint": "..." }
   ]
 }
 
 Los tweets generados deben estar en el mismo idioma que los tweets modelo, ser auténticos, no genéricos, sin hashtags excesivos, y listos para copiar y pegar.`
 }
 
-async function callGemini(prompt) {
+async function callGemini(prompt, temperature = 0.85) {
   const res = await fetch(`${LLM_BASE}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -168,7 +194,7 @@ async function callGemini(prompt) {
         { role: 'user', content: prompt },
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.85,
+      temperature,
     }),
   })
   if (!res.ok) {
@@ -191,10 +217,24 @@ async function handleRoute(request, { params }) {
     const database = await connectToMongo()
 
     if ((route === '/' || route === '/root') && method === 'GET') {
-      return handleCORS(NextResponse.json({ message: 'Viral Tweet Engine API OK' }))
+      return handleCORS(NextResponse.json({ message: 'ZMETA-AI Viral Engine API OK' }))
     }
 
-    // Main endpoint
+    // ---- FASE 1: Alertas proactivas ("Trend Catching") ----
+    if (route === '/alerts' && method === 'GET') {
+      const { searchParams } = new URL(request.url)
+      const topic = searchParams.get('topic') || 'tu nicho'
+      const alerts = buildAlerts(topic)
+      return handleCORS(NextResponse.json({ alerts }))
+    }
+
+    // ---- FASE 1: Métricas de Tiempo Recuperado ----
+    if (route === '/metrics' && method === 'GET') {
+      const metrics = await getMetrics(database)
+      return handleCORS(NextResponse.json(metrics))
+    }
+
+    // ---- Endpoint principal ----
     if (route === '/analyze-and-generate' && method === 'POST') {
       const body = await request.json()
       const type = body?.type
@@ -229,7 +269,6 @@ async function handleRoute(request, { params }) {
         originalTweets = await getTopicData(query, minFaves)
       }
 
-      // Sort by engagement, take top 10
       originalTweets = originalTweets
         .sort((a, b) => engagementScore(b) - engagementScore(a))
         .slice(0, 10)
@@ -251,6 +290,9 @@ async function handleRoute(request, { params }) {
       const prompt = buildPrompt(type, query, originalTweets)
       const analysis = await callGemini(prompt)
 
+      // FASE 1.2: incrementa Tiempo Recuperado (3 posts + 1 diagnóstico)
+      const metrics = await bumpMetrics(database, 3, 1)
+
       const result = {
         id: uuidv4(),
         type,
@@ -259,6 +301,7 @@ async function handleRoute(request, { params }) {
         userInfo,
         originalTweets,
         analysis,
+        metrics,
         createdAt: new Date(),
       }
 
@@ -266,6 +309,42 @@ async function handleRoute(request, { params }) {
 
       const { _id, ...clean } = result
       return handleCORS(NextResponse.json(clean))
+    }
+
+    // ---- FASE 3: Reescritura con IA (corregir punto débil) ----
+    if (route === '/rewrite' && method === 'POST') {
+      const body = await request.json()
+      const text = (body?.text || '').trim()
+      const weakPoint = (body?.weakPoint || '').trim()
+      const style = (body?.style || 'General').trim()
+
+      if (!text) {
+        return handleCORS(NextResponse.json({ error: "El campo 'text' es obligatorio" }, { status: 400 }))
+      }
+
+      const rewritePrompt = `Eres un copywriter viral senior para X. Reescribe y MEJORA el siguiente tweet corrigiendo específicamente su punto débil, manteniendo el estilo "${style}" y el mismo idioma.
+
+TWEET ORIGINAL:
+"${text}"
+
+PUNTO DÉBIL A CORREGIR:
+"${weakPoint || 'Mejora el gancho y la retención general.'}"
+
+Devuelve ÚNICAMENTE un JSON con esta estructura EXACTA (en el mismo idioma del tweet):
+{
+  "text": "nuevo tweet mejorado listo para publicar",
+  "rationale": "qué cambiaste y por qué mejora el rendimiento",
+  "hookStrength": 92,
+  "retention": "Alta",
+  "weakPoint": "punto débil residual (o 'Ninguno relevante')"
+}`
+
+      const rewritten = await callGemini(rewritePrompt, 0.9)
+
+      // reescritura cuenta como 1 post recuperado
+      const metrics = await bumpMetrics(database, 1, 0)
+
+      return handleCORS(NextResponse.json({ ...rewritten, metrics }))
     }
 
     // History

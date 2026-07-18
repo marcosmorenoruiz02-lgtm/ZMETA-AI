@@ -1,409 +1,567 @@
 #!/usr/bin/env python3
 """
-Backend API Tests for Viral Tweet Analysis App
-Tests the POST /api/analyze-and-generate endpoint and GET /api/history endpoint
+Backend API Tests for ZMETA-AI Viral Tweet App
+Tests new endpoints: /api/alerts, /api/metrics, score fields in analyze-and-generate, /api/rewrite
 """
 
 import requests
 import json
-import sys
 import time
-from typing import Dict, Any
+from urllib.parse import urlencode
 
-# Base URL from .env NEXT_PUBLIC_BASE_URL
+# Base URL from .env
 BASE_URL = "https://viral-insights-forge.preview.emergentagent.com/api"
 
-# Test configuration
-TIMEOUT = 90  # seconds - generous timeout for external API calls
-HEADERS = {"Content-Type": "application/json"}
-
-def print_section(title: str):
-    """Print a formatted section header"""
+def test_alerts():
+    """Test 1: GET /api/alerts?topic=Inteligencia%20Artificial"""
     print("\n" + "="*80)
-    print(f"  {title}")
+    print("TEST 1: GET /api/alerts?topic=Inteligencia%20Artificial")
     print("="*80)
-
-def print_test(test_name: str):
-    """Print test name"""
-    print(f"\n▶ TEST: {test_name}")
-
-def print_success(message: str):
-    """Print success message"""
-    print(f"  ✅ {message}")
-
-def print_error(message: str):
-    """Print error message"""
-    print(f"  ❌ {message}")
-
-def print_info(message: str):
-    """Print info message"""
-    print(f"  ℹ️  {message}")
-
-def validate_response_structure(data: Dict[str, Any], test_name: str) -> bool:
-    """Validate the response structure for analyze-and-generate endpoint"""
-    errors = []
     
-    # Check for required top-level fields
-    if "originalTweets" not in data:
-        errors.append("Missing 'originalTweets' field")
-    elif not isinstance(data["originalTweets"], list):
-        errors.append("'originalTweets' is not an array")
-    elif len(data["originalTweets"]) == 0:
-        errors.append("'originalTweets' array is empty")
-    else:
-        # Validate first tweet structure
-        tweet = data["originalTweets"][0]
-        required_tweet_fields = ["text", "likes", "retweets", "replies", "views"]
-        for field in required_tweet_fields:
-            if field not in tweet:
-                errors.append(f"Tweet missing '{field}' field")
+    try:
+        topic = "Inteligencia Artificial"
+        url = f"{BASE_URL}/alerts?topic={requests.utils.quote(topic)}"
+        print(f"URL: {url}")
+        
+        response = requests.get(url, timeout=30)
+        print(f"Status Code: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        data = response.json()
+        print(f"Response: {json.dumps(data, indent=2, ensure_ascii=False)}")
+        
+        # Verify structure
+        if "alerts" not in data:
+            print("❌ FAILED: Response missing 'alerts' field")
+            return False
+        
+        alerts = data["alerts"]
+        if not isinstance(alerts, list):
+            print("❌ FAILED: 'alerts' is not an array")
+            return False
+        
+        if len(alerts) < 2:
+            print(f"❌ FAILED: Expected at least 2 alerts, got {len(alerts)}")
+            return False
+        
+        # Check for trend and performance types
+        types = [a.get("type") for a in alerts]
+        if "trend" not in types:
+            print("❌ FAILED: No alert with type 'trend'")
+            return False
+        if "performance" not in types:
+            print("❌ FAILED: No alert with type 'performance'")
+            return False
+        
+        # Verify each alert has required fields
+        for i, alert in enumerate(alerts):
+            required_fields = ["id", "type", "title", "message"]
+            for field in required_fields:
+                if field not in alert:
+                    print(f"❌ FAILED: Alert {i} missing field '{field}'")
+                    return False
+                if not alert[field]:
+                    print(f"❌ FAILED: Alert {i} field '{field}' is empty")
+                    return False
+        
+        # Verify trend message mentions the topic
+        trend_alert = next((a for a in alerts if a["type"] == "trend"), None)
+        if trend_alert:
+            if topic not in trend_alert["message"]:
+                print(f"❌ FAILED: Trend message does not mention topic '{topic}'")
+                print(f"Message: {trend_alert['message']}")
+                return False
+        
+        print("✅ PASSED: All validations passed")
+        return True
+        
+    except Exception as e:
+        print(f"❌ FAILED: Exception - {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_metrics():
+    """Test 2: GET /api/metrics"""
+    print("\n" + "="*80)
+    print("TEST 2: GET /api/metrics")
+    print("="*80)
     
-    if "analysis" not in data:
-        errors.append("Missing 'analysis' field")
-    else:
+    try:
+        url = f"{BASE_URL}/metrics"
+        print(f"URL: {url}")
+        
+        response = requests.get(url, timeout=30)
+        print(f"Status Code: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False, None
+        
+        data = response.json()
+        print(f"Response: {json.dumps(data, indent=2)}")
+        
+        # Verify required fields
+        required_fields = ["posts", "diagnostics", "hours_saved"]
+        for field in required_fields:
+            if field not in data:
+                print(f"❌ FAILED: Response missing field '{field}'")
+                return False, None
+        
+        posts = data["posts"]
+        diagnostics = data["diagnostics"]
+        hours_saved = data["hours_saved"]
+        
+        # Verify types
+        if not isinstance(posts, (int, float)):
+            print(f"❌ FAILED: 'posts' is not a number: {type(posts)}")
+            return False, None
+        if not isinstance(diagnostics, (int, float)):
+            print(f"❌ FAILED: 'diagnostics' is not a number: {type(diagnostics)}")
+            return False, None
+        if not isinstance(hours_saved, (int, float)):
+            print(f"❌ FAILED: 'hours_saved' is not a number: {type(hours_saved)}")
+            return False, None
+        
+        # Verify formula: hours_saved = posts * 0.5 + diagnostics * 0.25
+        expected_hours = round(posts * 0.5 + diagnostics * 0.25, 2)
+        if abs(hours_saved - expected_hours) > 0.01:
+            print(f"❌ FAILED: hours_saved formula incorrect")
+            print(f"Expected: {expected_hours} (posts={posts} * 0.5 + diagnostics={diagnostics} * 0.25)")
+            print(f"Got: {hours_saved}")
+            return False, None
+        
+        print("✅ PASSED: All validations passed")
+        return True, data
+        
+    except Exception as e:
+        print(f"❌ FAILED: Exception - {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False, None
+
+
+def test_analyze_and_generate_with_scores():
+    """Test 3: POST /api/analyze-and-generate with score fields validation"""
+    print("\n" + "="*80)
+    print("TEST 3: POST /api/analyze-and-generate (verify score fields)")
+    print("="*80)
+    
+    try:
+        url = f"{BASE_URL}/analyze-and-generate"
+        print(f"URL: {url}")
+        
+        payload = {
+            "type": "user",
+            "query": "@MorrrMorrr63705"
+        }
+        print(f"Payload: {json.dumps(payload, indent=2)}")
+        
+        print("Sending request (may take up to 90s for external LLM/Twitter calls)...")
+        start_time = time.time()
+        response = requests.post(url, json=payload, timeout=120)
+        elapsed = time.time() - start_time
+        
+        print(f"Status Code: {response.status_code}")
+        print(f"Response Time: {elapsed:.2f}s")
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False, None
+        
+        data = response.json()
+        print(f"Response keys: {list(data.keys())}")
+        
+        # Verify analysis field exists
+        if "analysis" not in data:
+            print("❌ FAILED: Response missing 'analysis' field")
+            return False, None
+        
         analysis = data["analysis"]
         
-        # Check patternAnalysis
-        if "patternAnalysis" not in analysis:
-            errors.append("Missing 'analysis.patternAnalysis' field")
-        else:
-            pattern = analysis["patternAnalysis"]
-            if "summary" not in pattern:
-                errors.append("Missing 'analysis.patternAnalysis.summary'")
-            if "keyPatterns" not in pattern:
-                errors.append("Missing 'analysis.patternAnalysis.keyPatterns'")
-            elif not isinstance(pattern["keyPatterns"], list):
-                errors.append("'analysis.patternAnalysis.keyPatterns' is not an array")
-        
-        # Check generatedTweets - MUST be exactly 3
+        # Verify generatedTweets exists and has exactly 3 items
         if "generatedTweets" not in analysis:
-            errors.append("Missing 'analysis.generatedTweets' field")
-        elif not isinstance(analysis["generatedTweets"], list):
-            errors.append("'analysis.generatedTweets' is not an array")
-        else:
-            gen_tweets = analysis["generatedTweets"]
-            if len(gen_tweets) != 3:
-                errors.append(f"'analysis.generatedTweets' has {len(gen_tweets)} items, expected EXACTLY 3")
-            else:
-                # Validate each generated tweet
-                for i, gt in enumerate(gen_tweets):
-                    if "style" not in gt or not gt["style"]:
-                        errors.append(f"generatedTweets[{i}] missing or empty 'style'")
-                    if "text" not in gt or not gt["text"]:
-                        errors.append(f"generatedTweets[{i}] missing or empty 'text'")
-                    if "rationale" not in gt or not gt["rationale"]:
-                        errors.append(f"generatedTweets[{i}] missing or empty 'rationale'")
-    
-    if errors:
-        print_error(f"Response structure validation failed for {test_name}:")
-        for error in errors:
-            print(f"    - {error}")
-        return False
-    else:
-        print_success(f"Response structure is valid for {test_name}")
-        return True
+            print("❌ FAILED: analysis missing 'generatedTweets' field")
+            return False, None
+        
+        generated_tweets = analysis["generatedTweets"]
+        if not isinstance(generated_tweets, list):
+            print("❌ FAILED: generatedTweets is not an array")
+            return False, None
+        
+        if len(generated_tweets) != 3:
+            print(f"❌ FAILED: Expected exactly 3 generatedTweets, got {len(generated_tweets)}")
+            return False, None
+        
+        print(f"✓ generatedTweets has exactly 3 items")
+        
+        # Verify EACH tweet has the NEW score fields
+        required_fields = ["style", "text", "rationale", "hookStrength", "retention", "weakPoint"]
+        for i, tweet in enumerate(generated_tweets):
+            print(f"\nValidating generatedTweet #{i+1}:")
+            print(f"  Fields: {list(tweet.keys())}")
+            
+            for field in required_fields:
+                if field not in tweet:
+                    print(f"❌ FAILED: generatedTweet #{i+1} missing field '{field}'")
+                    return False, None
+            
+            # Verify hookStrength is integer 0-100
+            hook_strength = tweet["hookStrength"]
+            if not isinstance(hook_strength, int):
+                print(f"❌ FAILED: generatedTweet #{i+1} hookStrength is not an integer: {type(hook_strength)}")
+                return False, None
+            if hook_strength < 0 or hook_strength > 100:
+                print(f"❌ FAILED: generatedTweet #{i+1} hookStrength out of range (0-100): {hook_strength}")
+                return False, None
+            print(f"  ✓ hookStrength: {hook_strength}")
+            
+            # Verify retention is one of Alta/Media/Baja
+            retention = tweet["retention"]
+            if retention not in ["Alta", "Media", "Baja"]:
+                print(f"❌ FAILED: generatedTweet #{i+1} retention invalid: '{retention}' (expected Alta/Media/Baja)")
+                return False, None
+            print(f"  ✓ retention: {retention}")
+            
+            # Verify weakPoint is non-empty string
+            weak_point = tweet["weakPoint"]
+            if not isinstance(weak_point, str) or not weak_point.strip():
+                print(f"❌ FAILED: generatedTweet #{i+1} weakPoint is empty or not a string")
+                return False, None
+            print(f"  ✓ weakPoint: {weak_point[:50]}...")
+            
+            # Verify other fields are non-empty
+            for field in ["style", "text", "rationale"]:
+                if not tweet[field] or not str(tweet[field]).strip():
+                    print(f"❌ FAILED: generatedTweet #{i+1} field '{field}' is empty")
+                    return False, None
+        
+        # Verify metrics object exists
+        if "metrics" not in data:
+            print("❌ FAILED: Response missing 'metrics' field")
+            return False, None
+        
+        metrics = data["metrics"]
+        if "hours_saved" not in metrics:
+            print("❌ FAILED: metrics missing 'hours_saved' field")
+            return False, None
+        
+        print(f"\n✓ Response contains metrics object with hours_saved: {metrics['hours_saved']}")
+        
+        print("\n✅ PASSED: All score fields validated successfully")
+        return True, data
+        
+    except Exception as e:
+        print(f"❌ FAILED: Exception - {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False, None
 
-def test_mode_user():
-    """Test MODE USER (benchmarking) with @MorrrMorrr63705"""
-    print_test("MODE USER - Benchmarking (@MorrrMorrr63705)")
-    
-    payload = {
-        "type": "user",
-        "query": "@MorrrMorrr63705"
-    }
+
+def test_metrics_increment(baseline_metrics):
+    """Test 4: Verify metrics incremented after analyze-and-generate"""
+    print("\n" + "="*80)
+    print("TEST 4: GET /api/metrics (verify increment)")
+    print("="*80)
     
     try:
-        print_info(f"Sending POST request to {BASE_URL}/analyze-and-generate")
-        print_info(f"Payload: {json.dumps(payload)}")
-        print_info(f"Timeout: {TIMEOUT}s (external APIs may take 10-40s)")
+        url = f"{BASE_URL}/metrics"
+        print(f"URL: {url}")
         
+        response = requests.get(url, timeout=30)
+        print(f"Status Code: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            return False, None
+        
+        data = response.json()
+        print(f"Response: {json.dumps(data, indent=2)}")
+        
+        if baseline_metrics is None:
+            print("⚠️ SKIPPED: No baseline metrics to compare")
+            return True, data
+        
+        baseline_posts = baseline_metrics["posts"]
+        baseline_diagnostics = baseline_metrics["diagnostics"]
+        
+        current_posts = data["posts"]
+        current_diagnostics = data["diagnostics"]
+        
+        # After analyze-and-generate: posts should increase by 3, diagnostics by 1
+        expected_posts = baseline_posts + 3
+        expected_diagnostics = baseline_diagnostics + 1
+        
+        print(f"\nBaseline: posts={baseline_posts}, diagnostics={baseline_diagnostics}")
+        print(f"Current:  posts={current_posts}, diagnostics={current_diagnostics}")
+        print(f"Expected: posts={expected_posts}, diagnostics={expected_diagnostics}")
+        
+        if current_posts != expected_posts:
+            print(f"❌ FAILED: posts did not increment by 3 (expected {expected_posts}, got {current_posts})")
+            return False, None
+        
+        if current_diagnostics != expected_diagnostics:
+            print(f"❌ FAILED: diagnostics did not increment by 1 (expected {expected_diagnostics}, got {current_diagnostics})")
+            return False, None
+        
+        # Verify hours_saved formula
+        expected_hours = round(current_posts * 0.5 + current_diagnostics * 0.25, 2)
+        if abs(data["hours_saved"] - expected_hours) > 0.01:
+            print(f"❌ FAILED: hours_saved formula incorrect after increment")
+            return False, None
+        
+        print("\n✅ PASSED: Metrics incremented correctly (posts +3, diagnostics +1)")
+        return True, data
+        
+    except Exception as e:
+        print(f"❌ FAILED: Exception - {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False, None
+
+
+def test_rewrite():
+    """Test 5: POST /api/rewrite with proper body"""
+    print("\n" + "="*80)
+    print("TEST 5: POST /api/rewrite (valid request)")
+    print("="*80)
+    
+    try:
+        url = f"{BASE_URL}/rewrite"
+        print(f"URL: {url}")
+        
+        payload = {
+            "text": "La IA va a cambiar tu vida. Aquí te explico cómo.",
+            "weakPoint": "El gancho es genérico y no crea suficiente curiosidad.",
+            "style": "Directo / Gancho corto"
+        }
+        print(f"Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+        
+        print("Sending request (may take up to 90s for LLM call)...")
         start_time = time.time()
-        response = requests.post(
-            f"{BASE_URL}/analyze-and-generate",
-            json=payload,
-            headers=HEADERS,
-            timeout=TIMEOUT
-        )
+        response = requests.post(url, json=payload, timeout=120)
         elapsed = time.time() - start_time
         
-        print_info(f"Response received in {elapsed:.2f}s")
-        print_info(f"Status Code: {response.status_code}")
+        print(f"Status Code: {response.status_code}")
+        print(f"Response Time: {elapsed:.2f}s")
         
         if response.status_code != 200:
-            print_error(f"Expected status 200, got {response.status_code}")
-            print_info(f"Response: {response.text[:500]}")
-            return False
-        
-        print_success("Status code is 200")
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False, None
         
         data = response.json()
+        print(f"Response keys: {list(data.keys())}")
         
-        # Check for userInfo (specific to user mode)
-        if "userInfo" not in data:
-            print_error("Missing 'userInfo' field in user mode response")
-            return False
+        # Verify required fields
+        required_fields = ["text", "rationale", "hookStrength", "retention", "weakPoint", "metrics"]
+        for field in required_fields:
+            if field not in data:
+                print(f"❌ FAILED: Response missing field '{field}'")
+                return False, None
         
-        user_info = data["userInfo"]
-        if "userName" not in user_info or "followers" not in user_info:
-            print_error("userInfo missing required fields (userName, followers)")
-            return False
+        # Verify text is non-empty and different/improved
+        rewritten_text = data["text"]
+        if not isinstance(rewritten_text, str) or not rewritten_text.strip():
+            print("❌ FAILED: 'text' is empty or not a string")
+            return False, None
+        if rewritten_text == payload["text"]:
+            print("⚠️ WARNING: Rewritten text is identical to original (expected improvement)")
+        print(f"✓ text: {rewritten_text[:100]}...")
         
-        print_success(f"userInfo present: @{user_info.get('userName')} with {user_info.get('followers')} followers")
+        # Verify rationale is non-empty
+        rationale = data["rationale"]
+        if not isinstance(rationale, str) or not rationale.strip():
+            print("❌ FAILED: 'rationale' is empty or not a string")
+            return False, None
+        print(f"✓ rationale: {rationale[:100]}...")
         
-        # Validate common structure
-        is_valid = validate_response_structure(data, "MODE USER")
+        # Verify hookStrength is integer 0-100
+        hook_strength = data["hookStrength"]
+        if not isinstance(hook_strength, int):
+            print(f"❌ FAILED: hookStrength is not an integer: {type(hook_strength)}")
+            return False, None
+        if hook_strength < 0 or hook_strength > 100:
+            print(f"❌ FAILED: hookStrength out of range (0-100): {hook_strength}")
+            return False, None
+        print(f"✓ hookStrength: {hook_strength}")
         
-        if is_valid:
-            print_success("MODE USER test PASSED")
-            print_info(f"Found {len(data['originalTweets'])} original tweets")
-            print_info(f"Generated {len(data['analysis']['generatedTweets'])} tweets")
-            return True
-        else:
-            print_error("MODE USER test FAILED due to structure validation")
-            return False
-            
-    except requests.exceptions.Timeout:
-        print_error(f"Request timed out after {TIMEOUT}s")
-        return False
-    except requests.exceptions.RequestException as e:
-        print_error(f"Request failed: {str(e)}")
-        return False
-    except json.JSONDecodeError as e:
-        print_error(f"Failed to parse JSON response: {str(e)}")
-        print_info(f"Response text: {response.text[:500]}")
-        return False
+        # Verify retention is one of Alta/Media/Baja
+        retention = data["retention"]
+        if retention not in ["Alta", "Media", "Baja"]:
+            print(f"❌ FAILED: retention invalid: '{retention}' (expected Alta/Media/Baja)")
+            return False, None
+        print(f"✓ retention: {retention}")
+        
+        # Verify weakPoint is string
+        weak_point = data["weakPoint"]
+        if not isinstance(weak_point, str):
+            print(f"❌ FAILED: weakPoint is not a string: {type(weak_point)}")
+            return False, None
+        print(f"✓ weakPoint: {weak_point}")
+        
+        # Verify metrics object
+        metrics = data["metrics"]
+        if not isinstance(metrics, dict):
+            print("❌ FAILED: 'metrics' is not an object")
+            return False, None
+        if "posts" not in metrics:
+            print("❌ FAILED: metrics missing 'posts' field")
+            return False, None
+        print(f"✓ metrics: {json.dumps(metrics, indent=2)}")
+        
+        print("\n✅ PASSED: All validations passed")
+        return True, data
+        
     except Exception as e:
-        print_error(f"Unexpected error: {str(e)}")
-        return False
+        print(f"❌ FAILED: Exception - {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False, None
 
-def test_mode_topic():
-    """Test MODE TOPIC (topic scraping) with 'Inteligencia Artificial'"""
-    print_test("MODE TOPIC - Topic Scraping ('Inteligencia Artificial')")
-    
-    payload = {
-        "type": "topic",
-        "query": "Inteligencia Artificial",
-        "minFaves": 100
-    }
+
+def test_rewrite_metrics_increment(baseline_metrics):
+    """Test 6: Verify metrics incremented after rewrite"""
+    print("\n" + "="*80)
+    print("TEST 6: GET /api/metrics (verify rewrite increment)")
+    print("="*80)
     
     try:
-        print_info(f"Sending POST request to {BASE_URL}/analyze-and-generate")
-        print_info(f"Payload: {json.dumps(payload)}")
-        print_info(f"Timeout: {TIMEOUT}s (external APIs may take 10-40s)")
-        
-        start_time = time.time()
-        response = requests.post(
-            f"{BASE_URL}/analyze-and-generate",
-            json=payload,
-            headers=HEADERS,
-            timeout=TIMEOUT
-        )
-        elapsed = time.time() - start_time
-        
-        print_info(f"Response received in {elapsed:.2f}s")
-        print_info(f"Status Code: {response.status_code}")
+        url = f"{BASE_URL}/metrics"
+        response = requests.get(url, timeout=30)
         
         if response.status_code != 200:
-            print_error(f"Expected status 200, got {response.status_code}")
-            print_info(f"Response: {response.text[:500]}")
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
             return False
-        
-        print_success("Status code is 200")
         
         data = response.json()
+        print(f"Response: {json.dumps(data, indent=2)}")
         
-        # Validate common structure
-        is_valid = validate_response_structure(data, "MODE TOPIC")
-        
-        if is_valid:
-            print_success("MODE TOPIC test PASSED")
-            print_info(f"Found {len(data['originalTweets'])} original tweets")
-            print_info(f"Generated {len(data['analysis']['generatedTweets'])} tweets")
+        if baseline_metrics is None:
+            print("⚠️ SKIPPED: No baseline metrics to compare")
             return True
-        else:
-            print_error("MODE TOPIC test FAILED due to structure validation")
+        
+        baseline_posts = baseline_metrics["posts"]
+        current_posts = data["posts"]
+        
+        # After rewrite: posts should increase by 1
+        expected_posts = baseline_posts + 1
+        
+        print(f"\nBaseline posts: {baseline_posts}")
+        print(f"Current posts:  {current_posts}")
+        print(f"Expected posts: {expected_posts}")
+        
+        if current_posts != expected_posts:
+            print(f"❌ FAILED: posts did not increment by 1 (expected {expected_posts}, got {current_posts})")
             return False
-            
-    except requests.exceptions.Timeout:
-        print_error(f"Request timed out after {TIMEOUT}s")
-        return False
-    except requests.exceptions.RequestException as e:
-        print_error(f"Request failed: {str(e)}")
-        return False
-    except json.JSONDecodeError as e:
-        print_error(f"Failed to parse JSON response: {str(e)}")
-        print_info(f"Response text: {response.text[:500]}")
-        return False
+        
+        print("\n✅ PASSED: Metrics incremented correctly (posts +1)")
+        return True
+        
     except Exception as e:
-        print_error(f"Unexpected error: {str(e)}")
+        print(f"❌ FAILED: Exception - {str(e)}")
+        import traceback
+        traceback.print_exc()
         return False
 
-def test_validation_invalid_type():
-    """Test validation with invalid type"""
-    print_test("VALIDATION - Invalid type")
-    
-    payload = {
-        "type": "invalid",
-        "query": "x"
-    }
+
+def test_rewrite_validation():
+    """Test 7: POST /api/rewrite with empty body (validation)"""
+    print("\n" + "="*80)
+    print("TEST 7: POST /api/rewrite (validation - empty body)")
+    print("="*80)
     
     try:
-        print_info(f"Sending POST request with invalid type")
-        print_info(f"Payload: {json.dumps(payload)}")
+        url = f"{BASE_URL}/rewrite"
+        print(f"URL: {url}")
         
-        response = requests.post(
-            f"{BASE_URL}/analyze-and-generate",
-            json=payload,
-            headers=HEADERS,
-            timeout=10
-        )
+        payload = {}
+        print(f"Payload: {json.dumps(payload, indent=2)}")
         
-        print_info(f"Status Code: {response.status_code}")
+        response = requests.post(url, json=payload, timeout=30)
+        print(f"Status Code: {response.status_code}")
         
         if response.status_code != 400:
-            print_error(f"Expected status 400, got {response.status_code}")
+            print(f"❌ FAILED: Expected 400, got {response.status_code}")
+            print(f"Response: {response.text}")
             return False
         
-        print_success("Status code is 400 (as expected)")
-        
         data = response.json()
-        if "error" in data:
-            print_success(f"Error message present: {data['error']}")
+        print(f"Response: {json.dumps(data, indent=2, ensure_ascii=False)}")
         
-        print_success("VALIDATION (invalid type) test PASSED")
+        # Verify error message exists
+        if "error" not in data:
+            print("❌ FAILED: Response missing 'error' field")
+            return False
+        
+        print(f"✓ Error message: {data['error']}")
+        print("\n✅ PASSED: Validation working correctly")
         return True
         
     except Exception as e:
-        print_error(f"Unexpected error: {str(e)}")
+        print(f"❌ FAILED: Exception - {str(e)}")
+        import traceback
+        traceback.print_exc()
         return False
 
-def test_validation_missing_query():
-    """Test validation with missing query"""
-    print_test("VALIDATION - Missing query")
-    
-    payload = {
-        "type": "user"
-    }
-    
-    try:
-        print_info(f"Sending POST request with missing query")
-        print_info(f"Payload: {json.dumps(payload)}")
-        
-        response = requests.post(
-            f"{BASE_URL}/analyze-and-generate",
-            json=payload,
-            headers=HEADERS,
-            timeout=10
-        )
-        
-        print_info(f"Status Code: {response.status_code}")
-        
-        if response.status_code != 400:
-            print_error(f"Expected status 400, got {response.status_code}")
-            return False
-        
-        print_success("Status code is 400 (as expected)")
-        
-        data = response.json()
-        if "error" in data:
-            print_success(f"Error message present: {data['error']}")
-        
-        print_success("VALIDATION (missing query) test PASSED")
-        return True
-        
-    except Exception as e:
-        print_error(f"Unexpected error: {str(e)}")
-        return False
-
-def test_history():
-    """Test GET /api/history endpoint"""
-    print_test("HISTORY - GET /api/history")
-    
-    try:
-        print_info(f"Sending GET request to {BASE_URL}/history")
-        
-        response = requests.get(
-            f"{BASE_URL}/history",
-            timeout=10
-        )
-        
-        print_info(f"Status Code: {response.status_code}")
-        
-        if response.status_code != 200:
-            print_error(f"Expected status 200, got {response.status_code}")
-            return False
-        
-        print_success("Status code is 200")
-        
-        data = response.json()
-        
-        if not isinstance(data, list):
-            print_error("Response is not an array")
-            return False
-        
-        print_success(f"Response is an array with {len(data)} items")
-        
-        if len(data) > 0:
-            print_info("History contains saved analyses from previous tests")
-            # Check first item structure
-            first = data[0]
-            if "id" in first and "type" in first and "query" in first:
-                print_success("History items have expected structure")
-        else:
-            print_info("History is empty (no analyses saved yet)")
-        
-        print_success("HISTORY test PASSED")
-        return True
-        
-    except Exception as e:
-        print_error(f"Unexpected error: {str(e)}")
-        return False
 
 def main():
-    """Run all backend tests"""
-    print_section("VIRAL TWEET ANALYSIS APP - BACKEND API TESTS")
-    print_info(f"Base URL: {BASE_URL}")
-    print_info(f"Timeout: {TIMEOUT}s per request")
+    print("\n" + "="*80)
+    print("ZMETA-AI BACKEND API TESTS - NEW ENDPOINTS")
+    print("="*80)
+    print(f"Base URL: {BASE_URL}")
+    print("="*80)
     
     results = {}
     
-    # Test 1: MODE USER
-    print_section("TEST 1: MODE USER (Benchmarking)")
-    results["mode_user"] = test_mode_user()
+    # Test 1: Alerts
+    results["alerts"] = test_alerts()
     
-    # Test 2: MODE TOPIC
-    print_section("TEST 2: MODE TOPIC (Topic Scraping)")
-    results["mode_topic"] = test_mode_topic()
+    # Test 2: Metrics (baseline)
+    success, baseline_metrics = test_metrics()
+    results["metrics_baseline"] = success
     
-    # Test 3: VALIDATION - Invalid type
-    print_section("TEST 3: VALIDATION - Invalid Type")
-    results["validation_invalid_type"] = test_validation_invalid_type()
+    # Test 3: Analyze-and-generate with score fields
+    success, analyze_data = test_analyze_and_generate_with_scores()
+    results["analyze_with_scores"] = success
     
-    # Test 4: VALIDATION - Missing query
-    print_section("TEST 4: VALIDATION - Missing Query")
-    results["validation_missing_query"] = test_validation_missing_query()
+    # Test 4: Metrics increment after analyze-and-generate
+    success, metrics_after_analyze = test_metrics_increment(baseline_metrics)
+    results["metrics_after_analyze"] = success
     
-    # Test 5: HISTORY
-    print_section("TEST 5: HISTORY Endpoint")
-    results["history"] = test_history()
+    # Test 5: Rewrite with proper body
+    success, rewrite_data = test_rewrite()
+    results["rewrite"] = success
+    
+    # Test 6: Metrics increment after rewrite
+    results["metrics_after_rewrite"] = test_rewrite_metrics_increment(metrics_after_analyze)
+    
+    # Test 7: Rewrite validation
+    results["rewrite_validation"] = test_rewrite_validation()
     
     # Summary
-    print_section("TEST SUMMARY")
-    passed = sum(1 for v in results.values() if v)
+    print("\n" + "="*80)
+    print("TEST SUMMARY")
+    print("="*80)
+    for test_name, passed in results.items():
+        status = "✅ PASSED" if passed else "❌ FAILED"
+        print(f"{status}: {test_name}")
+    
     total = len(results)
+    passed = sum(1 for v in results.values() if v)
+    print(f"\nTotal: {passed}/{total} tests passed")
+    print("="*80)
     
-    for test_name, result in results.items():
-        status = "✅ PASSED" if result else "❌ FAILED"
-        print(f"  {test_name}: {status}")
-    
-    print(f"\n  Total: {passed}/{total} tests passed")
-    
-    if passed == total:
-        print_success("ALL TESTS PASSED")
-        return 0
-    else:
-        print_error(f"{total - passed} TEST(S) FAILED")
-        return 1
+    return all(results.values())
+
 
 if __name__ == "__main__":
-    sys.exit(main())
+    success = main()
+    exit(0 if success else 1)
