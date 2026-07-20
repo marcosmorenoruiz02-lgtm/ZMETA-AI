@@ -228,6 +228,51 @@ backend:
         -agent: "testing"
         -comment: "✅ PASSED - Tested POST /api/rewrite with body {text: 'La IA va a cambiar tu vida. Aquí te explico cómo.', weakPoint: 'El gancho es genérico y no crea suficiente curiosidad.', style: 'Directo / Gancho corto'}. Returns HTTP 200 in 10.77s. Response contains ALL required fields: text ('O entiendes la IA, o tu vida será OBSOLETA...', non-empty and improved), rationale (detailed explanation of changes), hookStrength (95, integer 0-100), retention ('Alta', valid enum Alta/Media/Baja), weakPoint ('Ninguno relevante', string), metrics ({posts: 1, diagnostics: 0, hours_saved: 0.5}). Metrics correctly incremented posts by 1. Validation test: POST with empty body {} returns HTTP 400 with error 'El campo text es obligatorio'. All validations passed."
 
+  - task: "FASE 1 - POST /api/vision-generate (Gemini Vision: OCR + tono + genera 3 posts)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "POST /api/vision-generate {image: dataURL, note?}. Envia imagen (o fotograma de video extraido en cliente) a gemini-2.5-flash multimodal via proxy Emergent (content array con image_url). Devuelve {vision:{description,ocr,tone,subjects[]}, analysis:{patternAnalysis, generatedTweets[3 con hookStrength/retention/weakPoint]}, metrics}. Verificado manualmente que el proxy soporta image_url y hace OCR correcto."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Created test image (400x200 PNG with text 'OFERTA IA 90% descuento') using PIL, base64-encoded to data URL. POST /api/vision-generate returns HTTP 200. Response structure validated: vision object contains description ('Una imagen minimalista con un fondo sólido de colo...'), ocr ('OFERTA IA\n90% descuento' - correctly extracted), tone ('Promocional, directo, emocionante, urgente.'), subjects (array with 3 items). analysis.generatedTweets has EXACTLY 3 items, each with style/text/rationale/hookStrength (int 0-100)/retention (Alta/Media/Baja)/weakPoint (non-empty string). metrics object present. Validations working: HTTP 400 for invalid image (not data URL) and missing image. All tests passed."
+
+  - task: "FASE 2.1 - POST /api/text-template (Express solo-texto: thread/controversy/myth)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "POST /api/text-template {format:'thread'|'controversy'|'myth', topic}. Devuelve analysis con patternAnalysis + generatedTweets (3 con scores). Valida formato y topic (400)."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Tested all three formats: (1) format='thread', topic='Productividad con IA' - HTTP 200, analysis.patternAnalysis present, generatedTweets EXACTLY 3 items with all score fields. (2) format='controversy', topic='SaaS' - HTTP 200, same valid structure. (3) format='myth', topic='Finanzas' - HTTP 200, same valid structure. Each tweet validated for style/text/rationale/hookStrength (int 0-100)/retention (Alta/Media/Baja)/weakPoint (non-empty string). metrics object present in all responses. Validations working: HTTP 400 for invalid format and missing topic. All tests passed."
+
+  - task: "FASE 2.2 - POST/GET /api/schedule (cola de borradores)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "POST /api/schedule {text, style?, hasMedia?, scheduledAt?} guarda borrador en coleccion 'scheduled' y devuelve {draft, count}. GET /api/schedule devuelve {items[], count}. Valida text obligatorio (400)."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - POST /api/schedule with {text: 'Mi primer tweet programado', style: 'Directo', hasMedia: false} returns HTTP 200. Response structure validated: draft object contains id (UUID), text, scheduledAt (date), status='scheduled', createdAt. count field present (value: 1, integer >= 1). GET /api/schedule returns HTTP 200 with items array (1 item) and count (1). Previously created draft found in list with correct text. Validation working: POST with empty body {} returns HTTP 400. All tests passed."
+
 frontend:
   - task: "UI premium dark mode con tabs Usuario/Tematica, grid de resultados y boton copiar"
     implemented: true
@@ -248,11 +293,7 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "FASE 1.1 - GET /api/alerts (alertas proactivas trend/performance)"
-    - "FASE 1.2 - GET /api/metrics (Tiempo Recuperado hours_saved)"
-    - "FASE 3.1 - Score de viralidad en generatedTweets (hookStrength/retention/weakPoint)"
-    - "FASE 3.1 - POST /api/rewrite (reescritura IA corrigiendo punto debil)"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -266,3 +307,5 @@ agent_communication:
     -message: "MODE TOPIC RETEST COMPLETED ✅ - Both test scenarios PASSED. Query 'Inteligencia Artificial' (minFaves=100): HTTP 200 in 28.79s, 10 tweets (all with likes >= 100), 3 generated tweets. Query 'SaaS' (minFaves=100): HTTP 200 in 16.80s, 10 tweets, 3 generated tweets. All validations passed: originalTweets is non-empty array with text/likes/retweets/replies/views, analysis.generatedTweets has EXACTLY 3 items with style/text/rationale. The min_faves filtering is working correctly. ALL BACKEND TESTS NOW PASSING. Ready for main agent to summarize and finish."
     -agent: "testing"
     -message: "NEW ENDPOINTS TESTING COMPLETED (ZMETA-AI enhancements). RESULTS: ✅ GET /api/alerts - Working (200, 2 alerts with trend/performance types, all fields present). ✅ GET /api/metrics - Working (200, correct formula hours_saved = posts*0.5 + diagnostics*0.25). ✅ POST /api/rewrite - Working (200, returns text/rationale/hookStrength/retention/weakPoint/metrics, validation working with 400 for empty body, metrics increment posts+1). ✅ Score fields verified via rewrite endpoint (hookStrength: 95, retention: 'Alta', weakPoint: 'Ninguno relevante'). ⚠️ EXTERNAL DEPENDENCY ISSUE: Twitter API credits exhausted (402 error), blocking direct test of analyze-and-generate score fields, but implementation verified as correct via rewrite endpoint which uses same Gemini prompt structure. All 4 new backend tasks marked as working=true. 5/7 test scenarios passed (2 blocked by Twitter API credits, not code bugs)."
+    -agent: "testing"
+    -message: "ZMETA-AI MULTIMEDIA ENDPOINTS TESTING COMPLETED ✅ - All three new backend endpoints PASSED all tests: (1) POST /api/vision-generate - HTTP 200, vision object with description/ocr/tone/subjects, analysis.generatedTweets EXACTLY 3 items with all score fields (hookStrength/retention/weakPoint), validations working (400 for invalid/missing image). OCR correctly extracted 'OFERTA IA 90% descuento' from test image. (2) POST /api/text-template - All three formats (thread/controversy/myth) return HTTP 200 with analysis.patternAnalysis and generatedTweets (EXACTLY 3 items with all score fields), validations working (400 for invalid format/missing topic). (3) POST/GET /api/schedule - POST creates draft with correct structure (id/text/scheduledAt/status='scheduled'/count), GET retrieves drafts correctly (items array/count), validation working (400 for missing text). All backend tasks now working=true, needs_retesting=false. Ready for main agent to summarize and finish."

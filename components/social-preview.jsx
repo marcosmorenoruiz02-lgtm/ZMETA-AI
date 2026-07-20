@@ -18,6 +18,7 @@ export default function SocialPreview({
   avatar = '',
   verified = true,
   text = '',
+  media = null,
   stats = { replies: 128, retweets: 342, likes: 2870, views: 84200 },
 }) {
   const cleanHandle = handle.replace('@', '')
@@ -39,23 +40,23 @@ export default function SocialPreview({
           <p className="mt-1 whitespace-pre-wrap text-[15px] leading-normal text-zinc-100">
             {text || 'Tu tweet aparecerá aquí...'}
           </p>
+          {media?.url && (
+            <div className="mt-3 rounded-2xl overflow-hidden border border-zinc-800">
+              <AspectRatio ratio={16 / 9}>
+                {media.type === 'video' ? (
+                  <video src={media.url} poster={media.poster} className="h-full w-full object-cover" muted />
+                ) : (
+                  <img src={media.url} alt="media" className="h-full w-full object-cover" />
+                )}
+              </AspectRatio>
+            </div>
+          )}
           <div className="mt-3 flex items-center justify-between max-w-md text-zinc-500">
-            <span className="inline-flex items-center gap-1.5 text-[13px] hover:text-sky-400 transition-colors">
-              <MessageCircle className="h-[18px] w-[18px]" /> {formatNum(stats.replies)}
-            </span>
-            <span className="inline-flex items-center gap-1.5 text-[13px] hover:text-emerald-400 transition-colors">
-              <Repeat2 className="h-[18px] w-[18px]" /> {formatNum(stats.retweets)}
-            </span>
-            <span className="inline-flex items-center gap-1.5 text-[13px] hover:text-rose-400 transition-colors">
-              <Heart className="h-[18px] w-[18px]" /> {formatNum(stats.likes)}
-            </span>
-            <span className="inline-flex items-center gap-1.5 text-[13px] hover:text-sky-400 transition-colors">
-              <BarChart2 className="h-[18px] w-[18px]" /> {formatNum(stats.views)}
-            </span>
-            <span className="inline-flex items-center gap-3">
-              <Bookmark className="h-[18px] w-[18px] hover:text-sky-400 transition-colors" />
-              <Share className="h-[18px] w-[18px] hover:text-sky-400 transition-colors" />
-            </span>
+            <span className="inline-flex items-center gap-1.5 text-[13px]"><MessageCircle className="h-[18px] w-[18px]" /> {formatNum(stats.replies)}</span>
+            <span className="inline-flex items-center gap-1.5 text-[13px]"><Repeat2 className="h-[18px] w-[18px]" /> {formatNum(stats.retweets)}</span>
+            <span className="inline-flex items-center gap-1.5 text-[13px]"><Heart className="h-[18px] w-[18px]" /> {formatNum(stats.likes)}</span>
+            <span className="inline-flex items-center gap-1.5 text-[13px]"><BarChart2 className="h-[18px] w-[18px]" /> {formatNum(stats.views)}</span>
+            <span className="inline-flex items-center gap-3"><Bookmark className="h-[18px] w-[18px]" /><Share className="h-[18px] w-[18px]" /></span>
           </div>
         </div>
       </div>
