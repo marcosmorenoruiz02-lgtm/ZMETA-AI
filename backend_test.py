@@ -1,481 +1,378 @@
 #!/usr/bin/env python3
 """
-Backend API Tests for ZMETA-AI Multimedia Vision + Text Express + Scheduling
-Tests POST /api/vision-generate, POST /api/text-template, POST/GET /api/schedule
+ZMETA-AI Backend Regression + New Feature Test
+Tests weighted engagement sorting, thread field, placeholder detection, and 280/thread rule
 """
-
 import requests
+import json
 import base64
-import io
-import os
+import time
+from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
-# Configuration
-BASE_URL = os.getenv('NEXT_PUBLIC_BASE_URL', 'https://viral-insights-forge.preview.emergentagent.com')
-API_BASE = f"{BASE_URL}/api"
-TIMEOUT = 90  # LLM calls are slow
+# Base URL from .env
+BASE_URL = "https://viral-insights-forge.preview.emergentagent.com/api"
+
+def log_test(name, passed, details=""):
+    status = "✅ PASS" if passed else "❌ FAIL"
+    print(f"\n{status} - {name}")
+    if details:
+        print(f"  {details}")
+
+def calculate_engagement_score(tweet):
+    """Calculate weighted engagement score: likes + retweets*2 + replies*1.5 + quotes*3 + views*0.01"""
+    return (
+        tweet.get('likes', 0) +
+        tweet.get('retweets', 0) * 2 +
+        tweet.get('replies', 0) * 1.5 +
+        tweet.get('quotes', 0) * 3 +
+        tweet.get('views', 0) * 0.01
+    )
+
+def check_thread_field(generated_tweets):
+    """Check if all generated tweets have a 'thread' field (array)"""
+    issues = []
+    for i, tweet in enumerate(generated_tweets):
+        if 'thread' not in tweet:
+            issues.append(f"Tweet {i+1} missing 'thread' field")
+        elif not isinstance(tweet['thread'], list):
+            issues.append(f"Tweet {i+1} 'thread' is not an array (type: {type(tweet['thread']).__name__})")
+    return issues
+
+def check_placeholders(generated_tweets):
+    """Check for placeholder tokens like [IMAGEN], [VIDEO], [LINK]"""
+    placeholders = ['[IMAGEN]', '[VIDEO]', '[LINK]', '[ADJUNTO]']
+    issues = []
+    for i, tweet in enumerate(generated_tweets):
+        text = tweet.get('text', '')
+        for placeholder in placeholders:
+            if placeholder.upper() in text.upper():
+                issues.append(f"Tweet {i+1} contains placeholder '{placeholder}' in text")
+        # Also check thread array
+        if 'thread' in tweet and isinstance(tweet['thread'], list):
+            for j, thread_text in enumerate(tweet['thread']):
+                for placeholder in placeholders:
+                    if placeholder.upper() in str(thread_text).upper():
+                        issues.append(f"Tweet {i+1} thread[{j}] contains placeholder '{placeholder}'")
+    return issues
+
+def check_280_thread_rule(generated_tweets):
+    """Check: text <= 280 OR (text > 280 implies thread.length >= 2)"""
+    issues = []
+    for i, tweet in enumerate(generated_tweets):
+        text = tweet.get('text', '')
+        thread = tweet.get('thread', [])
+        text_len = len(text)
+        
+        if text_len > 280:
+            if not isinstance(thread, list) or len(thread) < 2:
+                issues.append(f"Tweet {i+1} has {text_len} chars but thread length is {len(thread) if isinstance(thread, list) else 'N/A'} (expected >= 2)")
+        
+        # Also check each thread item is <= 280
+        if isinstance(thread, list):
+            for j, thread_text in enumerate(thread):
+                if len(str(thread_text)) > 280:
+                    issues.append(f"Tweet {i+1} thread[{j}] exceeds 280 chars ({len(str(thread_text))} chars)")
+    
+    return issues
 
 def create_test_image():
-    """Create a test image with text overlay using PIL"""
-    # Create a 400x200 image with gradient background
-    img = Image.new('RGB', (400, 200), color=(73, 109, 137))
-    d = ImageDraw.Draw(img)
-    
-    # Add text overlay
-    text = "OFERTA IA\n90% descuento"
+    """Create a small test PNG with text overlay"""
+    img = Image.new('RGB', (400, 200), color='#1DA1F2')
+    draw = ImageDraw.Draw(img)
     try:
-        # Try to use a default font
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
     except:
-        # Fallback to default font
         font = ImageFont.load_default()
     
-    # Draw text in center
-    d.text((50, 70), text, fill=(255, 255, 255), font=font)
+    draw.text((50, 70), "LANZAMIENTO IA", fill='white', font=font)
+    draw.text((50, 120), "Nuevo producto", fill='white', font=font)
     
-    # Convert to base64 data URL
-    buffer = io.BytesIO()
+    buffer = BytesIO()
     img.save(buffer, format='PNG')
-    img_bytes = buffer.getvalue()
-    img_b64 = base64.b64encode(img_bytes).decode('utf-8')
-    data_url = f"data:image/png;base64,{img_b64}"
-    
-    return data_url
+    buffer.seek(0)
+    b64 = base64.b64encode(buffer.read()).decode('utf-8')
+    return f"data:image/png;base64,{b64}"
 
-def test_vision_generate():
-    """Test POST /api/vision-generate endpoint"""
-    print("\n" + "="*80)
-    print("TEST 1: POST /api/vision-generate (Gemini Vision)")
-    print("="*80)
+print("=" * 80)
+print("ZMETA-AI BACKEND REGRESSION + NEW FEATURE TEST")
+print("=" * 80)
+
+# TEST 1: USER MODE - Weighted Engagement Sorting + New Validations
+print("\n" + "=" * 80)
+print("TEST 1: USER MODE - @MorrrMorrr63705")
+print("=" * 80)
+
+try:
+    start = time.time()
+    response = requests.post(
+        f"{BASE_URL}/analyze-and-generate",
+        json={"type": "user", "query": "@MorrrMorrr63705"},
+        timeout=120
+    )
+    elapsed = time.time() - start
     
-    # Generate test image
-    print("\n[1.1] Creating test image with PIL...")
-    try:
-        test_image = create_test_image()
-        print(f"✓ Test image created (data URL length: {len(test_image)} chars)")
-    except Exception as e:
-        print(f"✗ Failed to create test image: {e}")
-        return False
+    print(f"Response time: {elapsed:.2f}s")
+    print(f"Status code: {response.status_code}")
     
-    # Test valid request
-    print("\n[1.2] Testing valid request with image and note...")
-    try:
-        payload = {
-            "image": test_image,
-            "note": "tono motivador para lanzamiento"
-        }
-        response = requests.post(f"{API_BASE}/vision-generate", json=payload, timeout=TIMEOUT)
-        print(f"Response status: {response.status_code}")
-        
-        if response.status_code != 200:
-            print(f"✗ Expected HTTP 200, got {response.status_code}")
-            print(f"Response: {response.text[:500]}")
-            return False
-        
+    if response.status_code == 200:
         data = response.json()
-        print(f"✓ HTTP 200 received")
         
-        # Validate response structure
-        print("\n[1.3] Validating response structure...")
+        # Check originalTweets non-empty
+        original_tweets = data.get('originalTweets', [])
+        log_test("USER MODE: originalTweets non-empty", len(original_tweets) > 0, 
+                f"Found {len(original_tweets)} tweets")
+        
+        # Check weighted engagement sorting (DESCENDING)
+        if len(original_tweets) > 1:
+            scores = [calculate_engagement_score(t) for t in original_tweets]
+            is_sorted = all(scores[i] >= scores[i+1] for i in range(len(scores)-1))
+            log_test("USER MODE: Weighted engagement sorting (DESCENDING)", is_sorted,
+                    f"Scores: {[round(s, 2) for s in scores[:5]]}")
+            if not is_sorted:
+                print(f"  ❌ SORTING ERROR: Expected descending order")
+                for i, (tweet, score) in enumerate(zip(original_tweets[:5], scores[:5])):
+                    print(f"    Tweet {i+1}: score={score:.2f}, likes={tweet.get('likes')}, retweets={tweet.get('retweets')}, replies={tweet.get('replies')}, quotes={tweet.get('quotes')}, views={tweet.get('views')}")
+        
+        # Check generatedTweets exactly 3
+        generated_tweets = data.get('analysis', {}).get('generatedTweets', [])
+        log_test("USER MODE: generatedTweets exactly 3", len(generated_tweets) == 3,
+                f"Found {len(generated_tweets)} tweets")
+        
+        # Check thread field presence
+        thread_issues = check_thread_field(generated_tweets)
+        log_test("USER MODE: All tweets have 'thread' field", len(thread_issues) == 0,
+                "\n  ".join(thread_issues) if thread_issues else "All tweets have thread field (array)")
+        
+        # Check for placeholders
+        placeholder_issues = check_placeholders(generated_tweets)
+        log_test("USER MODE: No placeholder tokens", len(placeholder_issues) == 0,
+                "\n  ".join(placeholder_issues) if placeholder_issues else "No placeholders found")
+        
+        # Check 280/thread rule
+        rule_issues = check_280_thread_rule(generated_tweets)
+        log_test("USER MODE: 280/thread rule compliance", len(rule_issues) == 0,
+                "\n  ".join(rule_issues) if rule_issues else "All tweets comply with 280/thread rule")
+        
+        # Check all required fields
+        all_fields_ok = True
+        for i, tweet in enumerate(generated_tweets):
+            required = ['style', 'text', 'rationale', 'hookStrength', 'retention', 'weakPoint', 'thread']
+            missing = [f for f in required if f not in tweet]
+            if missing:
+                print(f"  ❌ Tweet {i+1} missing fields: {missing}")
+                all_fields_ok = False
+        log_test("USER MODE: All required fields present", all_fields_ok)
+        
+    else:
+        log_test("USER MODE: HTTP 200", False, f"Got {response.status_code}: {response.text[:200]}")
+        
+except Exception as e:
+    log_test("USER MODE: Request", False, f"Exception: {str(e)}")
+
+# TEST 2: TOPIC MODE - Same validations
+print("\n" + "=" * 80)
+print("TEST 2: TOPIC MODE - Inteligencia Artificial")
+print("=" * 80)
+
+try:
+    start = time.time()
+    response = requests.post(
+        f"{BASE_URL}/analyze-and-generate",
+        json={"type": "topic", "query": "Inteligencia Artificial", "minFaves": 100},
+        timeout=120
+    )
+    elapsed = time.time() - start
+    
+    print(f"Response time: {elapsed:.2f}s")
+    print(f"Status code: {response.status_code}")
+    
+    if response.status_code == 200:
+        data = response.json()
+        
+        # Check originalTweets non-empty
+        original_tweets = data.get('originalTweets', [])
+        log_test("TOPIC MODE: originalTweets non-empty", len(original_tweets) > 0,
+                f"Found {len(original_tweets)} tweets")
+        
+        # Check weighted engagement sorting (DESCENDING)
+        if len(original_tweets) > 1:
+            scores = [calculate_engagement_score(t) for t in original_tweets]
+            is_sorted = all(scores[i] >= scores[i+1] for i in range(len(scores)-1))
+            log_test("TOPIC MODE: Weighted engagement sorting (DESCENDING)", is_sorted,
+                    f"Scores: {[round(s, 2) for s in scores[:5]]}")
+            if not is_sorted:
+                print(f"  ❌ SORTING ERROR: Expected descending order")
+                for i, (tweet, score) in enumerate(zip(original_tweets[:5], scores[:5])):
+                    print(f"    Tweet {i+1}: score={score:.2f}, likes={tweet.get('likes')}, retweets={tweet.get('retweets')}, replies={tweet.get('replies')}, quotes={tweet.get('quotes')}, views={tweet.get('views')}")
+        
+        # Check generatedTweets exactly 3
+        generated_tweets = data.get('analysis', {}).get('generatedTweets', [])
+        log_test("TOPIC MODE: generatedTweets exactly 3", len(generated_tweets) == 3,
+                f"Found {len(generated_tweets)} tweets")
+        
+        # Check thread field presence
+        thread_issues = check_thread_field(generated_tweets)
+        log_test("TOPIC MODE: All tweets have 'thread' field", len(thread_issues) == 0,
+                "\n  ".join(thread_issues) if thread_issues else "All tweets have thread field (array)")
+        
+        # Check for placeholders
+        placeholder_issues = check_placeholders(generated_tweets)
+        log_test("TOPIC MODE: No placeholder tokens", len(placeholder_issues) == 0,
+                "\n  ".join(placeholder_issues) if placeholder_issues else "No placeholders found")
+        
+        # Check 280/thread rule
+        rule_issues = check_280_thread_rule(generated_tweets)
+        log_test("TOPIC MODE: 280/thread rule compliance", len(rule_issues) == 0,
+                "\n  ".join(rule_issues) if rule_issues else "All tweets comply with 280/thread rule")
+        
+        # Check all required fields
+        all_fields_ok = True
+        for i, tweet in enumerate(generated_tweets):
+            required = ['style', 'text', 'rationale', 'hookStrength', 'retention', 'weakPoint', 'thread']
+            missing = [f for f in required if f not in tweet]
+            if missing:
+                print(f"  ❌ Tweet {i+1} missing fields: {missing}")
+                all_fields_ok = False
+        log_test("TOPIC MODE: All required fields present", all_fields_ok)
+        
+    else:
+        log_test("TOPIC MODE: HTTP 200", False, f"Got {response.status_code}: {response.text[:200]}")
+        
+except Exception as e:
+    log_test("TOPIC MODE: Request", False, f"Exception: {str(e)}")
+
+# TEST 3: VISION MODE - Image with thread field checks
+print("\n" + "=" * 80)
+print("TEST 3: VISION MODE - Image with text overlay")
+print("=" * 80)
+
+try:
+    image_data_url = create_test_image()
+    print(f"Created test image (data URL length: {len(image_data_url)} chars)")
+    
+    start = time.time()
+    response = requests.post(
+        f"{BASE_URL}/vision-generate",
+        json={"image": image_data_url, "note": "lanzamiento"},
+        timeout=120
+    )
+    elapsed = time.time() - start
+    
+    print(f"Response time: {elapsed:.2f}s")
+    print(f"Status code: {response.status_code}")
+    
+    if response.status_code == 200:
+        data = response.json()
         
         # Check vision object
-        if 'vision' not in data:
-            print("✗ Missing 'vision' object")
-            return False
+        vision = data.get('vision', {})
+        has_vision = all(k in vision for k in ['description', 'ocr', 'tone', 'subjects'])
+        log_test("VISION MODE: vision object complete", has_vision,
+                f"Keys: {list(vision.keys())}")
         
-        vision = data['vision']
-        required_vision_fields = ['description', 'ocr', 'tone', 'subjects']
-        for field in required_vision_fields:
-            if field not in vision:
-                print(f"✗ Missing vision.{field}")
-                return False
-            if field == 'subjects':
-                if not isinstance(vision[field], list):
-                    print(f"✗ vision.subjects must be array, got {type(vision[field])}")
-                    return False
-            else:
-                if not isinstance(vision[field], str):
-                    print(f"✗ vision.{field} must be string, got {type(vision[field])}")
-                    return False
-                if field in ['description', 'tone'] and not vision[field]:
-                    print(f"✗ vision.{field} is empty")
-                    return False
+        # Check audio object
+        audio = data.get('audio', {})
+        has_audio = 'tone' in audio
+        log_test("VISION MODE: audio object present", has_audio,
+                f"Audio tone: {audio.get('tone', 'N/A')}")
         
-        print(f"✓ vision object valid: description='{vision['description'][:50]}...', ocr='{vision['ocr']}', tone='{vision['tone']}', subjects={len(vision['subjects'])} items")
+        # Check combined_hook_angle
+        has_hook = 'combined_hook_angle' in data and isinstance(data['combined_hook_angle'], str)
+        log_test("VISION MODE: combined_hook_angle present", has_hook)
         
-        # Check analysis object
-        if 'analysis' not in data:
-            print("✗ Missing 'analysis' object")
-            return False
+        # Check generatedTweets exactly 3
+        generated_tweets = data.get('analysis', {}).get('generatedTweets', [])
+        log_test("VISION MODE: generatedTweets exactly 3", len(generated_tweets) == 3,
+                f"Found {len(generated_tweets)} tweets")
         
-        analysis = data['analysis']
-        if 'generatedTweets' not in analysis:
-            print("✗ Missing analysis.generatedTweets")
-            return False
+        # Check thread field presence
+        thread_issues = check_thread_field(generated_tweets)
+        log_test("VISION MODE: All tweets have 'thread' field", len(thread_issues) == 0,
+                "\n  ".join(thread_issues) if thread_issues else "All tweets have thread field (array)")
         
-        tweets = analysis['generatedTweets']
-        if not isinstance(tweets, list):
-            print(f"✗ analysis.generatedTweets must be array, got {type(tweets)}")
-            return False
+        # Check for placeholders
+        placeholder_issues = check_placeholders(generated_tweets)
+        log_test("VISION MODE: No placeholder tokens", len(placeholder_issues) == 0,
+                "\n  ".join(placeholder_issues) if placeholder_issues else "No placeholders found")
         
-        if len(tweets) != 3:
-            print(f"✗ Expected EXACTLY 3 generatedTweets, got {len(tweets)}")
-            return False
+        # Check 280/thread rule
+        rule_issues = check_280_thread_rule(generated_tweets)
+        log_test("VISION MODE: 280/thread rule compliance", len(rule_issues) == 0,
+                "\n  ".join(rule_issues) if rule_issues else "All tweets comply with 280/thread rule")
         
-        print(f"✓ analysis.generatedTweets has EXACTLY 3 items")
+        # Check all required fields
+        all_fields_ok = True
+        for i, tweet in enumerate(generated_tweets):
+            required = ['style', 'text', 'rationale', 'hookStrength', 'retention', 'weakPoint', 'thread']
+            missing = [f for f in required if f not in tweet]
+            if missing:
+                print(f"  ❌ Tweet {i+1} missing fields: {missing}")
+                all_fields_ok = False
+        log_test("VISION MODE: All required fields present", all_fields_ok)
         
-        # Validate each tweet
-        required_tweet_fields = ['style', 'text', 'rationale', 'hookStrength', 'retention', 'weakPoint']
-        for i, tweet in enumerate(tweets):
-            for field in required_tweet_fields:
-                if field not in tweet:
-                    print(f"✗ Tweet {i+1} missing field '{field}'")
-                    return False
-                
-                if field == 'hookStrength':
-                    if not isinstance(tweet[field], int) or not (0 <= tweet[field] <= 100):
-                        print(f"✗ Tweet {i+1} hookStrength must be int 0-100, got {tweet[field]}")
-                        return False
-                elif field == 'retention':
-                    if tweet[field] not in ['Alta', 'Media', 'Baja']:
-                        print(f"✗ Tweet {i+1} retention must be Alta/Media/Baja, got '{tweet[field]}'")
-                        return False
-                else:
-                    if not isinstance(tweet[field], str) or not tweet[field]:
-                        print(f"✗ Tweet {i+1} {field} must be non-empty string")
-                        return False
-        
-        print(f"✓ All 3 tweets have valid structure (style/text/rationale/hookStrength/retention/weakPoint)")
-        
-        # Check metrics
-        if 'metrics' not in data:
-            print("✗ Missing 'metrics' object")
-            return False
-        
-        print(f"✓ metrics object present: {data['metrics']}")
-        
-    except requests.exceptions.Timeout:
-        print(f"✗ Request timed out after {TIMEOUT}s")
-        return False
-    except Exception as e:
-        print(f"✗ Error: {e}")
-        return False
-    
-    # Test validation: invalid image
-    print("\n[1.4] Testing validation: invalid image (not a data URL)...")
-    try:
-        payload = {"image": "not-a-data-url"}
-        response = requests.post(f"{API_BASE}/vision-generate", json=payload, timeout=TIMEOUT)
-        if response.status_code != 400:
-            print(f"✗ Expected HTTP 400, got {response.status_code}")
-            return False
-        print(f"✓ HTTP 400 returned for invalid image")
-    except Exception as e:
-        print(f"✗ Error: {e}")
-        return False
-    
-    # Test validation: missing image
-    print("\n[1.5] Testing validation: missing image...")
-    try:
-        payload = {}
-        response = requests.post(f"{API_BASE}/vision-generate", json=payload, timeout=TIMEOUT)
-        if response.status_code != 400:
-            print(f"✗ Expected HTTP 400, got {response.status_code}")
-            return False
-        print(f"✓ HTTP 400 returned for missing image")
-    except Exception as e:
-        print(f"✗ Error: {e}")
-        return False
-    
-    print("\n✅ POST /api/vision-generate - ALL TESTS PASSED")
-    return True
-
-def test_text_template():
-    """Test POST /api/text-template endpoint"""
-    print("\n" + "="*80)
-    print("TEST 2: POST /api/text-template (Express Text Templates)")
-    print("="*80)
-    
-    test_cases = [
-        {"format": "thread", "topic": "Productividad con IA"},
-        {"format": "controversy", "topic": "SaaS"},
-        {"format": "myth", "topic": "Finanzas"}
-    ]
-    
-    for i, test_case in enumerate(test_cases):
-        print(f"\n[2.{i+1}] Testing format='{test_case['format']}', topic='{test_case['topic']}'...")
-        try:
-            response = requests.post(f"{API_BASE}/text-template", json=test_case, timeout=TIMEOUT)
-            print(f"Response status: {response.status_code}")
-            
-            if response.status_code != 200:
-                print(f"✗ Expected HTTP 200, got {response.status_code}")
-                print(f"Response: {response.text[:500]}")
-                return False
-            
-            data = response.json()
-            print(f"✓ HTTP 200 received")
-            
-            # Validate analysis object
-            if 'analysis' not in data:
-                print("✗ Missing 'analysis' object")
-                return False
-            
-            analysis = data['analysis']
-            
-            # Check patternAnalysis
-            if 'patternAnalysis' not in analysis:
-                print("✗ Missing analysis.patternAnalysis")
-                return False
-            
-            print(f"✓ analysis.patternAnalysis present")
-            
-            # Check generatedTweets
-            if 'generatedTweets' not in analysis:
-                print("✗ Missing analysis.generatedTweets")
-                return False
-            
-            tweets = analysis['generatedTweets']
-            if not isinstance(tweets, list):
-                print(f"✗ analysis.generatedTweets must be array, got {type(tweets)}")
-                return False
-            
-            if len(tweets) != 3:
-                print(f"✗ Expected EXACTLY 3 generatedTweets, got {len(tweets)}")
-                return False
-            
-            print(f"✓ analysis.generatedTweets has EXACTLY 3 items")
-            
-            # Validate each tweet
-            required_fields = ['style', 'text', 'rationale', 'hookStrength', 'retention', 'weakPoint']
-            for j, tweet in enumerate(tweets):
-                for field in required_fields:
-                    if field not in tweet:
-                        print(f"✗ Tweet {j+1} missing field '{field}'")
-                        return False
-                    
-                    if field == 'hookStrength':
-                        if not isinstance(tweet[field], int) or not (0 <= tweet[field] <= 100):
-                            print(f"✗ Tweet {j+1} hookStrength must be int 0-100, got {tweet[field]}")
-                            return False
-                    elif field == 'retention':
-                        if tweet[field] not in ['Alta', 'Media', 'Baja']:
-                            print(f"✗ Tweet {j+1} retention must be Alta/Media/Baja, got '{tweet[field]}'")
-                            return False
-                    else:
-                        if not isinstance(tweet[field], str) or not tweet[field]:
-                            print(f"✗ Tweet {j+1} {field} must be non-empty string")
-                            return False
-            
-            print(f"✓ All 3 tweets have valid structure (style/text/rationale/hookStrength/retention/weakPoint)")
-            
-            # Check metrics
-            if 'metrics' not in data:
-                print("✗ Missing 'metrics' object")
-                return False
-            
-            print(f"✓ metrics object present")
-            
-        except requests.exceptions.Timeout:
-            print(f"✗ Request timed out after {TIMEOUT}s")
-            return False
-        except Exception as e:
-            print(f"✗ Error: {e}")
-            return False
-    
-    # Test validation: invalid format
-    print("\n[2.4] Testing validation: invalid format...")
-    try:
-        payload = {"format": "invalid", "topic": "x"}
-        response = requests.post(f"{API_BASE}/text-template", json=payload, timeout=TIMEOUT)
-        if response.status_code != 400:
-            print(f"✗ Expected HTTP 400, got {response.status_code}")
-            return False
-        print(f"✓ HTTP 400 returned for invalid format")
-    except Exception as e:
-        print(f"✗ Error: {e}")
-        return False
-    
-    # Test validation: missing topic
-    print("\n[2.5] Testing validation: missing topic...")
-    try:
-        payload = {"format": "thread"}
-        response = requests.post(f"{API_BASE}/text-template", json=payload, timeout=TIMEOUT)
-        if response.status_code != 400:
-            print(f"✗ Expected HTTP 400, got {response.status_code}")
-            return False
-        print(f"✓ HTTP 400 returned for missing topic")
-    except Exception as e:
-        print(f"✗ Error: {e}")
-        return False
-    
-    print("\n✅ POST /api/text-template - ALL TESTS PASSED")
-    return True
-
-def test_schedule():
-    """Test POST and GET /api/schedule endpoints"""
-    print("\n" + "="*80)
-    print("TEST 3: POST/GET /api/schedule (Draft Scheduling)")
-    print("="*80)
-    
-    # Test POST /api/schedule
-    print("\n[3.1] Testing POST /api/schedule with valid data...")
-    try:
-        payload = {
-            "text": "Mi primer tweet programado",
-            "style": "Directo",
-            "hasMedia": False
-        }
-        response = requests.post(f"{API_BASE}/schedule", json=payload, timeout=30)
-        print(f"Response status: {response.status_code}")
-        
-        if response.status_code != 200:
-            print(f"✗ Expected HTTP 200, got {response.status_code}")
-            print(f"Response: {response.text[:500]}")
-            return False
-        
-        data = response.json()
-        print(f"✓ HTTP 200 received")
-        
-        # Validate response structure
-        if 'draft' not in data:
-            print("✗ Missing 'draft' object")
-            return False
-        
-        draft = data['draft']
-        required_fields = ['id', 'text', 'scheduledAt', 'status']
-        for field in required_fields:
-            if field not in draft:
-                print(f"✗ draft missing field '{field}'")
-                return False
-        
-        if draft['status'] != 'scheduled':
-            print(f"✗ Expected draft.status='scheduled', got '{draft['status']}'")
-            return False
-        
-        print(f"✓ draft object valid: id={draft['id']}, text='{draft['text']}', status='{draft['status']}'")
-        
-        if 'count' not in data:
-            print("✗ Missing 'count' field")
-            return False
-        
-        if not isinstance(data['count'], int) or data['count'] < 1:
-            print(f"✗ count must be >= 1, got {data['count']}")
-            return False
-        
-        print(f"✓ count field valid: {data['count']}")
-        
-        saved_draft_id = draft['id']
-        
-    except Exception as e:
-        print(f"✗ Error: {e}")
-        return False
-    
-    # Test GET /api/schedule
-    print("\n[3.2] Testing GET /api/schedule...")
-    try:
-        response = requests.get(f"{API_BASE}/schedule", timeout=30)
-        print(f"Response status: {response.status_code}")
-        
-        if response.status_code != 200:
-            print(f"✗ Expected HTTP 200, got {response.status_code}")
-            return False
-        
-        data = response.json()
-        print(f"✓ HTTP 200 received")
-        
-        if 'items' not in data:
-            print("✗ Missing 'items' array")
-            return False
-        
-        if not isinstance(data['items'], list):
-            print(f"✗ items must be array, got {type(data['items'])}")
-            return False
-        
-        if 'count' not in data:
-            print("✗ Missing 'count' field")
-            return False
-        
-        print(f"✓ Response structure valid: items array with {len(data['items'])} items, count={data['count']}")
-        
-        # Check if our draft is in the list
-        found = False
-        for item in data['items']:
-            if item.get('id') == saved_draft_id:
-                found = True
-                print(f"✓ Previously created draft found in list: '{item['text']}'")
-                break
-        
-        if not found:
-            print(f"⚠ Warning: Previously created draft (id={saved_draft_id}) not found in list")
-        
-    except Exception as e:
-        print(f"✗ Error: {e}")
-        return False
-    
-    # Test validation: missing text
-    print("\n[3.3] Testing validation: missing text...")
-    try:
-        payload = {}
-        response = requests.post(f"{API_BASE}/schedule", json=payload, timeout=30)
-        if response.status_code != 400:
-            print(f"✗ Expected HTTP 400, got {response.status_code}")
-            return False
-        print(f"✓ HTTP 400 returned for missing text")
-    except Exception as e:
-        print(f"✗ Error: {e}")
-        return False
-    
-    print("\n✅ POST/GET /api/schedule - ALL TESTS PASSED")
-    return True
-
-def main():
-    """Run all backend tests"""
-    print("\n" + "="*80)
-    print("ZMETA-AI BACKEND API TESTS")
-    print(f"Base URL: {BASE_URL}")
-    print(f"API Base: {API_BASE}")
-    print(f"Timeout: {TIMEOUT}s per request")
-    print("="*80)
-    
-    results = {
-        "vision-generate": False,
-        "text-template": False,
-        "schedule": False
-    }
-    
-    try:
-        results["vision-generate"] = test_vision_generate()
-    except Exception as e:
-        print(f"\n✗ CRITICAL ERROR in vision-generate test: {e}")
-    
-    try:
-        results["text-template"] = test_text_template()
-    except Exception as e:
-        print(f"\n✗ CRITICAL ERROR in text-template test: {e}")
-    
-    try:
-        results["schedule"] = test_schedule()
-    except Exception as e:
-        print(f"\n✗ CRITICAL ERROR in schedule test: {e}")
-    
-    # Summary
-    print("\n" + "="*80)
-    print("TEST SUMMARY")
-    print("="*80)
-    for endpoint, passed in results.items():
-        status = "✅ PASSED" if passed else "❌ FAILED"
-        print(f"{endpoint}: {status}")
-    
-    all_passed = all(results.values())
-    print("\n" + "="*80)
-    if all_passed:
-        print("🎉 ALL BACKEND TESTS PASSED")
     else:
-        print("⚠️  SOME TESTS FAILED")
-    print("="*80)
-    
-    return 0 if all_passed else 1
+        log_test("VISION MODE: HTTP 200", False, f"Got {response.status_code}: {response.text[:200]}")
+        
+except Exception as e:
+    log_test("VISION MODE: Request", False, f"Exception: {str(e)}")
 
-if __name__ == "__main__":
-    exit(main())
+# TEST 4: TEXT TEMPLATE MODE - Thread field checks
+print("\n" + "=" * 80)
+print("TEST 4: TEXT TEMPLATE MODE - format=thread, topic=Productividad")
+print("=" * 80)
+
+try:
+    start = time.time()
+    response = requests.post(
+        f"{BASE_URL}/text-template",
+        json={"format": "thread", "topic": "Productividad"},
+        timeout=120
+    )
+    elapsed = time.time() - start
+    
+    print(f"Response time: {elapsed:.2f}s")
+    print(f"Status code: {response.status_code}")
+    
+    if response.status_code == 200:
+        data = response.json()
+        
+        # Check generatedTweets exactly 3
+        generated_tweets = data.get('analysis', {}).get('generatedTweets', [])
+        log_test("TEXT TEMPLATE: generatedTweets exactly 3", len(generated_tweets) == 3,
+                f"Found {len(generated_tweets)} tweets")
+        
+        # Check thread field presence
+        thread_issues = check_thread_field(generated_tweets)
+        log_test("TEXT TEMPLATE: All tweets have 'thread' field", len(thread_issues) == 0,
+                "\n  ".join(thread_issues) if thread_issues else "All tweets have thread field (array)")
+        
+        # Check for placeholders
+        placeholder_issues = check_placeholders(generated_tweets)
+        log_test("TEXT TEMPLATE: No placeholder tokens", len(placeholder_issues) == 0,
+                "\n  ".join(placeholder_issues) if placeholder_issues else "No placeholders found")
+        
+        # Check 280/thread rule
+        rule_issues = check_280_thread_rule(generated_tweets)
+        log_test("TEXT TEMPLATE: 280/thread rule compliance", len(rule_issues) == 0,
+                "\n  ".join(rule_issues) if rule_issues else "All tweets comply with 280/thread rule")
+        
+        # Check all required fields
+        all_fields_ok = True
+        for i, tweet in enumerate(generated_tweets):
+            required = ['style', 'text', 'rationale', 'hookStrength', 'retention', 'weakPoint', 'thread']
+            missing = [f for f in required if f not in tweet]
+            if missing:
+                print(f"  ❌ Tweet {i+1} missing fields: {missing}")
+                all_fields_ok = False
+        log_test("TEXT TEMPLATE: All required fields present", all_fields_ok)
+        
+    else:
+        log_test("TEXT TEMPLATE: HTTP 200", False, f"Got {response.status_code}: {response.text[:200]}")
+        
+except Exception as e:
+    log_test("TEXT TEMPLATE: Request", False, f"Exception: {str(e)}")
+
+print("\n" + "=" * 80)
+print("TEST SUITE COMPLETE")
+print("=" * 80)

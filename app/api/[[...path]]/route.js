@@ -43,6 +43,13 @@ const SCORE_SPEC = `Para CADA tweet generado calcula un SCORE DE VIRALIDAD PREDI
   - retention: "Alta" | "Media" | "Baja"
   - weakPoint: una frase corta señalando el punto débil o mayor área de mejora`
 
+const COPY_RULES = `REGLAS DE COPY PARA X (obligatorias):
+  - Cada tweet DEBE caber en 280 caracteres como máximo.
+  - Si la idea necesita más espacio, divídela en un HILO: rellena el campo "thread" (array de strings, cada uno ≤280 chars) donde thread[0] es el gancho y el resto continúa; deja "text" igual a thread[0]. Si el tweet cabe en 280, "thread" debe ser [] (array vacío).
+  - NO incluyas placeholders como [IMAGEN], [VIDEO], [LINK], [ADJUNTO].
+  - Aplica disparadores de viralidad: pattern interrupt, brecha de curiosidad, polarización, controversia o sarcasmo afilado, orientados al crecimiento de la cuenta.
+  - Añade a cada objeto de generatedTweets el campo "thread" (array, vacío por defecto).`
+
 // ----------------------------- Metrics -----------------------------
 async function getMetrics(database) {
   const doc = await database.collection('metrics').findOne({ _id: 'global' })
@@ -80,7 +87,8 @@ function normalizeTweet(t, fallbackAuthor = null) {
 }
 
 function engagementScore(t) {
-  return (t.likes || 0) + (t.retweets || 0) * 2 + (t.replies || 0) + (t.quotes || 0)
+  // Métrica ponderada: Likes + RT*2 + Replies*1.5 + Quotes*3 + Views*0.01
+  return (t.likes || 0) + (t.retweets || 0) * 2 + (t.replies || 0) * 1.5 + (t.quotes || 0) * 3 + (t.views || 0) * 0.01
 }
 
 async function twitterGet(path, params) {
@@ -158,6 +166,8 @@ FASE 2 - INGENIERÍA INVERSA VIRAL: Genera EXACTAMENTE 3 propuestas de tweets nu
 
 ${SCORE_SPEC}
 
+${COPY_RULES}
+
 Responde ÚNICAMENTE con un objeto JSON válido con esta estructura EXACTA (en español):
 {
   "patternAnalysis": {
@@ -165,48 +175,72 @@ Responde ÚNICAMENTE con un objeto JSON válido con esta estructura EXACTA (en e
     "keyPatterns": ["patrón 1", "patrón 2", "patrón 3", "patrón 4"]
   },
   "generatedTweets": [
-    { "style": "Educativo / Lista", "text": "...", "rationale": "...", "hookStrength": 87, "retention": "Alta", "weakPoint": "..." },
-    { "style": "Provocativo / Opinión", "text": "...", "rationale": "...", "hookStrength": 82, "retention": "Media", "weakPoint": "..." },
-    { "style": "Directo / Gancho corto", "text": "...", "rationale": "...", "hookStrength": 90, "retention": "Alta", "weakPoint": "..." }
+    { "style": "Educativo / Lista", "text": "...", "rationale": "...", "hookStrength": 87, "retention": "Alta", "weakPoint": "...", "thread": [] },
+    { "style": "Provocativo / Opinión", "text": "...", "rationale": "...", "hookStrength": 82, "retention": "Media", "weakPoint": "...", "thread": [] },
+    { "style": "Directo / Gancho corto", "text": "...", "rationale": "...", "hookStrength": 90, "retention": "Alta", "weakPoint": "...", "thread": [] }
   ]
 }
 
 Los tweets deben estar en español, ser auténticos, sin hashtags excesivos, listos para copiar y pegar.`
 }
 
-function buildVisionPrompt(note) {
-  return `Eres un experto en marketing viral para X. Analiza la imagen adjunta (que puede ser una foto o un fotograma extraído de un video) y crea contenido listo para publicar.
+function buildVisionPrompt(note, transcript) {
+  return `Eres un experto en marketing viral para X. Analiza el material adjunto (puede incluir una imagen/fotograma de video y/o la transcripción del audio) y crea contenido listo para publicar.
 
 ${note ? `Contexto/instrucción del usuario: "${note}"` : ''}
+${transcript ? `TRANSCRIPCIÓN DEL AUDIO (extraída del video o clip de audio):\n"""${transcript}"""` : 'No hay audio disponible en este material.'}
 
 TAREAS:
-1. VISIÓN: Extrae el contexto visual, los temas/sujetos principales, el texto sobreimpreso (OCR) y el tono emocional.
-2. GENERACIÓN: Crea EXACTAMENTE 3 propuestas de posts para X inspirados en la imagen, en estilos distintos:
-   1. Educativo / Lista
-   2. Provocativo / Opinión
-   3. Directo / Gancho corto
+1. VISIÓN (si hay imagen): extrae contexto visual, sujetos, texto sobreimpreso (OCR) y tono visual.
+2. AUDIO (si hay transcripción): resume las frases/quotes clave y detecta el tono/ambiente sonoro (ej. música enérgica, diálogo conversacional, explicación tutorial, ruido ambiente).
+3. FUSIÓN: combina el contexto visual + audio en un ángulo de gancho unificado de alta retención.
+4. GENERACIÓN: crea EXACTAMENTE 3 posts para X inspirados en el material, en estilos distintos (Educativo / Lista, Provocativo / Opinión, Directo / Gancho corto).
 
 ${SCORE_SPEC}
 
+${COPY_RULES}
+
 Responde ÚNICAMENTE con JSON válido con esta estructura EXACTA (en español):
 {
-  "vision": {
-    "description": "descripción de la imagen en 1-2 frases",
-    "ocr": "texto detectado en la imagen o cadena vacía",
-    "tone": "tono emocional detectado",
-    "subjects": ["sujeto 1", "sujeto 2", "sujeto 3"]
-  },
+  "vision": { "description": "...", "ocr": "texto detectado o cadena vacía", "tone": "...", "subjects": ["...", "..."] },
+  "audio": { "transcript": "resumen o transcripción del audio (cadena vacía si no hay)", "keyQuotes": ["frase clave 1", "frase clave 2"], "tone": "tono/ambiente sonoro (o 'Sin audio')" },
+  "combined_hook_angle": "ángulo de gancho unificado audio+visual",
   "patternAnalysis": {
-    "summary": "por qué este enfoque visual puede funcionar en X",
+    "summary": "por qué este enfoque puede funcionar en X",
     "hook": "...", "tone": "...", "length": "...", "format": "...",
     "keyPatterns": ["...", "...", "..."]
   },
   "generatedTweets": [
-    { "style": "Educativo / Lista", "text": "...", "rationale": "...", "hookStrength": 88, "retention": "Alta", "weakPoint": "..." },
-    { "style": "Provocativo / Opinión", "text": "...", "rationale": "...", "hookStrength": 84, "retention": "Media", "weakPoint": "..." },
-    { "style": "Directo / Gancho corto", "text": "...", "rationale": "...", "hookStrength": 91, "retention": "Alta", "weakPoint": "..." }
+    { "style": "Educativo / Lista", "text": "...", "rationale": "...", "hookStrength": 88, "retention": "Alta", "weakPoint": "...", "thread": [] },
+    { "style": "Provocativo / Opinión", "text": "...", "rationale": "...", "hookStrength": 84, "retention": "Media", "weakPoint": "...", "thread": [] },
+    { "style": "Directo / Gancho corto", "text": "...", "rationale": "...", "hookStrength": 91, "retention": "Alta", "weakPoint": "...", "thread": [] }
   ]
 }`
+}
+
+// Transcripción de audio/video vía Whisper (proxy Emergent, OpenAI-compatible)
+async function transcribeMedia(dataUrl) {
+  const m = dataUrl.match(/^data:([^;]+);base64,(.*)$/s)
+  if (!m) return ''
+  const mime = m[1]
+  const buf = Buffer.from(m[2], 'base64')
+  if (buf.length > 25 * 1024 * 1024) throw new Error('El archivo supera el límite de 25MB para transcripción')
+  const ext = mime.includes('wav') ? 'wav' : mime.includes('mp4') ? 'mp4' : mime.includes('quicktime') || mime.includes('mov') ? 'mov' : mime.includes('webm') ? 'webm' : 'mp3'
+  const form = new FormData()
+  form.append('model', 'whisper-1')
+  form.append('response_format', 'json')
+  form.append('file', new Blob([buf], { type: mime }), `media.${ext}`)
+  const res = await fetch(`${LLM_BASE}/audio/transcriptions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${LLM_KEY}` },
+    body: form,
+  })
+  if (!res.ok) {
+    const t = await res.text()
+    throw new Error(`Whisper error (${res.status}): ${t.slice(0, 200)}`)
+  }
+  const j = await res.json()
+  return j?.text || ''
 }
 
 const TEMPLATE_LABELS = {
@@ -223,6 +257,8 @@ Requisitos de formato: usa listas con emojis cuando aporten valor, saltos de lí
 
 ${SCORE_SPEC}
 
+${COPY_RULES}
+
 Responde ÚNICAMENTE con JSON válido con esta estructura EXACTA:
 {
   "patternAnalysis": {
@@ -231,9 +267,9 @@ Responde ÚNICAMENTE con JSON válido con esta estructura EXACTA:
     "keyPatterns": ["...", "...", "..."]
   },
   "generatedTweets": [
-    { "style": "Variante 1", "text": "...", "rationale": "...", "hookStrength": 88, "retention": "Alta", "weakPoint": "..." },
-    { "style": "Variante 2", "text": "...", "rationale": "...", "hookStrength": 85, "retention": "Media", "weakPoint": "..." },
-    { "style": "Variante 3", "text": "...", "rationale": "...", "hookStrength": 90, "retention": "Alta", "weakPoint": "..." }
+    { "style": "Variante 1", "text": "...", "rationale": "...", "hookStrength": 88, "retention": "Alta", "weakPoint": "...", "thread": [] },
+    { "style": "Variante 2", "text": "...", "rationale": "...", "hookStrength": 85, "retention": "Media", "weakPoint": "...", "thread": [] },
+    { "style": "Variante 3", "text": "...", "rationale": "...", "hookStrength": 90, "retention": "Alta", "weakPoint": "...", "thread": [] }
   ]
 }`
 }
@@ -321,29 +357,46 @@ async function handleRoute(request, { params }) {
       return handleCORS(NextResponse.json(clean))
     }
 
-    // FASE 1: Motor de Visión (imagen o fotograma de video)
+    // FASE 1: Motor Audiovisual (imagen/fotograma + transcripción de audio)
     if (route === '/vision-generate' && method === 'POST') {
       const body = await request.json()
       const image = body?.image
+      const media = body?.media
       const note = (body?.note || '').trim()
-      if (!image || typeof image !== 'string' || !image.startsWith('data:')) {
-        return handleCORS(NextResponse.json({ error: "El campo 'image' (data URL) es obligatorio" }, { status: 400 }))
+      const hasImage = typeof image === 'string' && image.startsWith('data:')
+      const hasMedia = typeof media === 'string' && media.startsWith('data:')
+      if (!hasImage && !hasMedia) {
+        return handleCORS(NextResponse.json({ error: "Se requiere 'image' o 'media' (data URL)" }, { status: 400 }))
       }
-      const userContent = [
-        { type: 'text', text: buildVisionPrompt(note) },
-        { type: 'image_url', image_url: { url: image } },
-      ]
+
+      // 1) Transcripción de audio (video o audio) vía Whisper
+      let transcript = ''
+      let transcriptError = null
+      if (hasMedia) {
+        try { transcript = await transcribeMedia(media) } catch (e) { transcriptError = e?.message || 'Transcripción no disponible' }
+      }
+
+      // 2) Fusión audio + visión con Gemini
+      const userContent = [{ type: 'text', text: buildVisionPrompt(note, transcript) }]
+      if (hasImage) userContent.push({ type: 'image_url', image_url: { url: image } })
+
       const result = await rawGeminiJSON([{ role: 'system', content: SYSTEM }, { role: 'user', content: userContent }], 0.85)
       const metrics = await bumpMetrics(database, 3, 1)
+
+      const audio = result?.audio || { transcript: '', keyQuotes: [], tone: 'Sin audio' }
+      if (transcript && !audio.transcript) audio.transcript = transcript
+      if (transcriptError) audio.error = transcriptError
+
       const payload = {
         id: uuidv4(),
         mode: 'media',
         vision: result?.vision || null,
+        audio,
+        combined_hook_angle: result?.combined_hook_angle || '',
         analysis: { patternAnalysis: result?.patternAnalysis || null, generatedTweets: result?.generatedTweets || [] },
         metrics,
         createdAt: new Date(),
       }
-      // no guardamos la imagen completa en analyses para no inflar la BD
       await database.collection('analyses').insertOne({ ...payload })
       const { _id, ...clean } = payload
       return handleCORS(NextResponse.json(clean))
