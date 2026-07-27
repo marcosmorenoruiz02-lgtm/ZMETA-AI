@@ -252,6 +252,8 @@ export default function App() {
   const analysis = data?.analysis?.patternAnalysis
   const vision = data?.vision
   const audio = data?.audio
+  const growth = data?.growth || data?.analysis?.growth || null
+  const primeTimes = data?.primeTimes || []
 
   return (
     <div className="h-screen overflow-hidden flex flex-col bg-background text-foreground">
@@ -393,6 +395,19 @@ export default function App() {
               </CardContent></Card>
             </div>
           )}
+          {data && !loading && primeTimes.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-2 text-sm font-semibold"><Clock className="h-4 w-4 text-accent" /> Prime Time del nicho <span className="text-[11px] font-normal text-muted-foreground">· ventanas 2h</span></div>
+              <Card className="glass"><CardContent className="p-3 space-y-2">
+                {primeTimes.map((p, i) => (
+                  <div key={i} className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-mono text-foreground/90 flex items-center gap-2">{i === 0 && <Trophy className="h-3.5 w-3.5 text-amber-400" />}{p.window}</span>
+                    <span className="text-xs text-muted-foreground">{p.count} tweets · {formatNum(p.score)} pts</span>
+                  </div>
+                ))}
+              </CardContent></Card>
+            </div>
+          )}
         </aside>
 
         {/* RIGHT PANEL */}
@@ -415,6 +430,29 @@ export default function App() {
                 {analysis.format && <div className="rounded-lg bg-secondary/40 p-2"><span className="text-muted-foreground">Formato:</span> {analysis.format}</div>}
               </div>
               {analysis.keyPatterns?.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{analysis.keyPatterns.map((p, i) => (<Badge key={i} variant="secondary" className="bg-primary/10 text-primary border border-primary/20 font-normal">{p}</Badge>))}</div>}
+            </CardContent></Card>
+          )}
+
+          {growth && !loading && (
+            <Card className="glass border-accent/30"><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2 text-accent"><Rocket className="h-4 w-4" /> Motor de Crecimiento Viral</CardTitle></CardHeader><CardContent className="pt-0 space-y-3">
+              {growth.topBanners?.length > 0 && (
+                <div>
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1.5 font-mono">Top Banners (overlay video)</div>
+                  <div className="space-y-1.5">{growth.topBanners.map((b, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2 rounded-lg bg-secondary/40 px-3 py-2">
+                      <span className="text-sm font-bold tracking-tight text-foreground uppercase">{b}</span>
+                      <CopyButton text={b} />
+                    </div>
+                  ))}</div>
+                </div>
+              )}
+              {growth.loopOutro && (
+                <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-2.5">
+                  <div className="flex items-center justify-between mb-1"><span className="text-[11px] uppercase tracking-wide text-cyan-400 font-mono flex items-center gap-1"><RotateCcw className="h-3 w-3" /> Loop Outro (retención)</span><CopyButton text={growth.loopOutro} /></div>
+                  <p className="text-sm text-foreground/90">{growth.loopOutro}</p>
+                </div>
+              )}
+              {growth.replyStrategy && (<p className="text-xs text-muted-foreground"><span className="text-accent">Estrategia de respuestas:</span> {growth.replyStrategy}</p>)}
             </CardContent></Card>
           )}
 
@@ -449,6 +487,13 @@ export default function App() {
                 )}
 
                 {g.rationale && (<><Separator className="my-3" /><p className="text-xs text-muted-foreground"><span className="text-foreground/80">Por qué funciona:</span> {g.rationale}</p></>)}
+
+                {g.firstSelfReply && (
+                  <div className="mt-3 rounded-lg border border-primary/25 bg-primary/5 p-2.5">
+                    <div className="flex items-center justify-between mb-1"><span className="text-[11px] uppercase tracking-wide text-primary font-mono flex items-center gap-1"><MessageCircle className="h-3 w-3" /> Auto-Reply (arranca comentarios)</span><CopyButton text={g.firstSelfReply} /></div>
+                    <p className="text-sm text-foreground/90">{g.firstSelfReply}</p>
+                  </div>
+                )}
 
                 <div className="mt-3"><div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1.5 font-mono">// Preview X</div><SocialPreview name="Z.META" handle={myHandle} avatar={data?.userInfo?.profilePicture} text={isThread ? g.thread[0] : g.text} media={resultMedia} /></div>
 

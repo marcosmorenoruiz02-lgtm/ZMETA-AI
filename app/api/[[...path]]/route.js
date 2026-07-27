@@ -8,11 +8,11 @@ let client
 let db
 
 async function connectToMongo() {
-  if (!client) {
-    client = new MongoClient(process.env.MONGO_URL)
-    await client.connect()
-    db = client.db(process.env.DB_NAME)
-  }
+  if (db) return db
+  const c = new MongoClient(process.env.MONGO_URL)
+  await c.connect()
+  client = c
+  db = c.db(process.env.DB_NAME)
   return db
 }
 
@@ -49,6 +49,16 @@ const COPY_RULES = `REGLAS DE COPY PARA X (obligatorias):
   - NO incluyas placeholders como [IMAGEN], [VIDEO], [LINK], [ADJUNTO].
   - Aplica disparadores de viralidad: pattern interrupt, brecha de curiosidad, polarización, controversia o sarcasmo afilado, orientados al crecimiento de la cuenta.
   - Añade a cada objeto de generatedTweets el campo "thread" (array, vacío por defecto).`
+
+const GROWTH_SPEC = `MECÁNICAS DE CRECIMIENTO VIRAL (añádelas SIEMPRE al JSON):
+  - Añade a CADA objeto de "generatedTweets" el campo "firstSelfReply": una autorespuesta breve (≤280) para publicar tú mismo justo debajo del post y arrancar los comentarios (dato extra, pregunta abierta o CTA que invite a responder).
+  - Añade al NIVEL RAÍZ del JSON un objeto "growth" con esta forma EXACTA:
+    "growth": {
+      "topBanners": ["TITULAR 1 EN MAYÚSCULAS", "TITULAR 2 EN MAYÚSCULAS", "TITULAR 3 EN MAYÚSCULAS"],
+      "loopOutro": "frase de cierre que conecta el final del contenido con su primer segundo para maximizar el loop y el watch time",
+      "replyStrategy": "consejo de 1 frase para maximizar el ratio de respuestas/debate"
+    }
+  Los topBanners son ganchos de overlay para video: cortos, punchy, en MAYÚSCULAS.`
 
 // ----------------------------- Metrics -----------------------------
 async function getMetrics(database) {
@@ -87,8 +97,23 @@ function normalizeTweet(t, fallbackAuthor = null) {
 }
 
 function engagementScore(t) {
-  // Métrica ponderada: Likes + RT*2 + Replies*1.5 + Quotes*3 + Views*0.01
-  return (t.likes || 0) + (t.retweets || 0) * 2 + (t.replies || 0) * 1.5 + (t.quotes || 0) * 3 + (t.views || 0) * 0.01
+  // Score compuesto: Views*0.05 + Likes*1 + RT*2 + Replies*1.5 + Quotes*3
+  return (t.views || 0) * 0.05 + (t.likes || 0) + (t.retweets || 0) * 2 + (t.replies || 0) * 1.5 + (t.quotes || 0) * 3
+}
+
+// Agrupa tweets en ventanas de 2 horas (UTC) y devuelve los mejores horarios por engagement
+function computePrimeTimes(tweets) {
+  const buckets = {}
+  for (const t of tweets) {
+    const d = t?.createdAt ? new Date(t.createdAt) : null
+    if (!d || isNaN(d)) continue
+    const start = Math.floor(d.getUTCHours() / 2) * 2
+    const key = start
+    if (!buckets[key]) buckets[key] = { window: `${String(start).padStart(2, '0')}:00–${String(start + 2).padStart(2, '0')}:00 UTC`, count: 0, score: 0 }
+    buckets[key].count += 1
+    buckets[key].score += engagementScore(t)
+  }
+  return Object.values(buckets).sort((a, b) => b.score - a.score).slice(0, 3).map((b) => ({ ...b, score: Math.round(b.score) }))
 }
 
 async function twitterGet(path, params) {
@@ -104,14 +129,20 @@ async function twitterGet(path, params) {
 
 async function getUserData(userName) {
   const clean = userName.replace('@', '').trim()
-  const [infoRes, tweetsRes] = await Promise.all([
+  // 1) Motor top-performing: advanced_search from:usuario (queryType Top)
+  const [infoRes, topRes] = await Promise.all([
     twitterGet('/twitter/user/info', { userName: clean }),
-    twitterGet('/twitter/user/last_tweets', { userName: clean }),
+    twitterGet('/twitter/tweet/advanced_search', { query: `from:${clean}`, queryType: 'Top' }).catch(() => ({ tweets: [] })),
   ])
   const info = infoRes?.data || {}
-  const rawTweets = tweetsRes?.data?.tweets || []
   const authorFallback = { name: info?.name, userName: info?.userName, profilePicture: info?.profilePicture }
-  const tweets = rawTweets.filter((t) => t?.text && !t?.isReply).map((t) => normalizeTweet(t, authorFallback))
+  let raw = (topRes?.tweets || []).filter((t) => t?.text && !t?.isReply)
+  // 2) Fallback a last_tweets si advanced_search no devuelve resultados
+  if (raw.length === 0) {
+    const tweetsRes = await twitterGet('/twitter/user/last_tweets', { userName: clean }).catch(() => ({}))
+    raw = (tweetsRes?.data?.tweets || []).filter((t) => t?.text && !t?.isReply)
+  }
+  const tweets = raw.map((t) => normalizeTweet(t, authorFallback))
   return { info, tweets }
 }
 
@@ -168,6 +199,8 @@ ${SCORE_SPEC}
 
 ${COPY_RULES}
 
+${GROWTH_SPEC}
+
 Responde ÚNICAMENTE con un objeto JSON válido con esta estructura EXACTA (en español):
 {
   "patternAnalysis": {
@@ -199,6 +232,8 @@ TAREAS:
 ${SCORE_SPEC}
 
 ${COPY_RULES}
+
+${GROWTH_SPEC}
 
 Responde ÚNICAMENTE con JSON válido con esta estructura EXACTA (en español):
 {
@@ -258,6 +293,8 @@ Requisitos de formato: usa listas con emojis cuando aporten valor, saltos de lí
 ${SCORE_SPEC}
 
 ${COPY_RULES}
+
+${GROWTH_SPEC}
 
 Responde ÚNICAMENTE con JSON válido con esta estructura EXACTA:
 {
@@ -350,8 +387,9 @@ async function handleRoute(request, { params }) {
 
       const analysis = await callGemini(buildPrompt(type, query, originalTweets))
       const metrics = await bumpMetrics(database, 3, 1)
+      const primeTimes = computePrimeTimes(originalTweets)
 
-      const result = { id: uuidv4(), mode: type, query, minFaves: type === 'topic' ? minFaves : null, userInfo, originalTweets, analysis, metrics, createdAt: new Date() }
+      const result = { id: uuidv4(), mode: type, query, minFaves: type === 'topic' ? minFaves : null, userInfo, originalTweets, analysis, growth: analysis?.growth || null, primeTimes, metrics, createdAt: new Date() }
       await database.collection('analyses').insertOne({ ...result })
       const { _id, ...clean } = result
       return handleCORS(NextResponse.json(clean))
@@ -394,6 +432,7 @@ async function handleRoute(request, { params }) {
         audio,
         combined_hook_angle: result?.combined_hook_angle || '',
         analysis: { patternAnalysis: result?.patternAnalysis || null, generatedTweets: result?.generatedTweets || [] },
+        growth: result?.growth || null,
         metrics,
         createdAt: new Date(),
       }
@@ -415,7 +454,7 @@ async function handleRoute(request, { params }) {
       }
       const analysis = await callGemini(buildTemplatePrompt(format, topic), 0.9)
       const metrics = await bumpMetrics(database, 3, 1)
-      return handleCORS(NextResponse.json({ id: uuidv4(), mode: 'text', format, query: topic, analysis, metrics }))
+      return handleCORS(NextResponse.json({ id: uuidv4(), mode: 'text', format, query: topic, analysis, growth: analysis?.growth || null, metrics }))
     }
 
     // FASE 3.1 / rewrite
