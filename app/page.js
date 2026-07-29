@@ -19,7 +19,7 @@ import {
   Zap, TrendingUp, ExternalLink, Flame, BrainCircuit, BadgeCheck, Clock,
   AlertTriangle, Wand2, Loader2, Trophy, Radar, Sun, Moon, ImageIcon,
   ScanText, Smile, CalendarClock, Layers, Rocket, MessageSquareQuote, Lightbulb,
-  History, Star, Download, RotateCcw, Activity, Cpu, Music, ListOrdered,
+  History, Star, Download, RotateCcw, Activity, Cpu, Music, ListOrdered, Instagram,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -130,6 +130,9 @@ export default function App() {
   const [resultMedia, setResultMedia] = useState(null)
   const [expressTopic, setExpressTopic] = useState('')
   const [expressOpen, setExpressOpen] = useState(false)
+  const [igUrl, setIgUrl] = useState('')
+  const [igLoading, setIgLoading] = useState(false)
+  const [igResult, setIgResult] = useState(null)
   const [fromCache, setFromCache] = useState(false)
   const [history, setHistory] = useState([])
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -214,6 +217,23 @@ export default function App() {
     if (!topic) { toast.error('Escribe una temática para el post express'); return }
     setExpressOpen(false)
     runGeneric({ apiPath: '/api/text-template', apiBody: { format, topic }, label: `🚀 ${TEXT_FORMATS.find((f) => f.key === format)?.label}: ${topic}`, focus: `Creando post express sobre "${topic}"` })
+  }
+
+  const extractInstagram = async () => {
+    const u = igUrl.trim()
+    if (!u) { toast.error('Pega una URL de Instagram (reel/p/tv)'); return }
+    setIgLoading(true); setIgResult(null)
+    try {
+      const res = await fetch('/api/instagram/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: u }) })
+      const j = await res.json()
+      if (!res.ok) { toast.error(j?.error || 'No se pudo extraer el vídeo') }
+      else { setIgResult(j); successToast('Vídeo extraído', 'Listo para previsualizar y procesar') }
+    } catch (e) { toast.error('Error de conexión') } finally { setIgLoading(false) }
+  }
+
+  const sendInstagramToViral = () => {
+    if (!igResult?.url) return
+    runGeneric({ apiPath: '/api/instagram/analyze', apiBody: { url: igResult.url }, label: `📸 IG: ${(igResult.caption || igResult.url).slice(0, 32)}`, media: { url: igResult.mp4Url, type: 'video', poster: igResult.thumbnail }, focus: 'Descargando reel + transcripción Whisper + visión IA…' })
   }
 
   const rewriteTweet = async (index) => {
@@ -352,7 +372,27 @@ export default function App() {
                   <div className="flex flex-wrap gap-1.5">{SUGGESTED_TOPICS.map((t) => (<button key={t} onClick={() => setTopicQuery(t)} className={`text-[11px] px-2.5 py-1 rounded-full border transition-all ${topicQuery === t ? 'border-accent bg-accent/15 text-accent' : 'border-border bg-secondary/40 text-muted-foreground hover:border-accent/50'}`}>{t}</button>))}</div>
                   <div className="flex items-center gap-2 flex-wrap"><span className="text-[11px] text-muted-foreground">Engagement min:</span>{[100, 500, 1000, 5000].map((v) => (<button key={v} onClick={() => setMinFaves(v)} className={`text-[11px] px-2 py-0.5 rounded-md border ${minFaves === v ? 'border-accent bg-accent/15 text-accent' : 'border-border text-muted-foreground'}`}>{formatNum(v)}+❤️</button>))}</div>
                 </TabsContent>
-                <TabsContent value="media" className="mt-0"><MediaUploader onGenerate={runVision} loading={loading} /></TabsContent>
+                <TabsContent value="media" className="mt-0 space-y-3">
+                  <div className="glass rounded-xl p-3 space-y-2.5">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-foreground"><Instagram className="h-4 w-4 text-pink-500" /> Descargar Instagram Reel</div>
+                    <div className="flex gap-2">
+                      <Input value={igUrl} onChange={(e) => setIgUrl(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && extractInstagram()} placeholder="https://www.instagram.com/reel/..." className="bg-background/50 h-10 text-sm" />
+                      <Button onClick={extractInstagram} disabled={igLoading} className="h-10 shrink-0 bg-gradient-to-r from-pink-500 to-purple-600 text-white glow-primary">{igLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : (<><Download className="h-4 w-4 sm:mr-1.5" /><span className="hidden sm:inline">Extraer</span></>)}</Button>
+                    </div>
+                    {igResult?.mp4Url && (
+                      <div className="space-y-2 animate-in fade-in duration-300">
+                        <video src={igResult.mp4Url} poster={igResult.thumbnail} controls className="w-full max-h-56 rounded-lg bg-black object-contain" />
+                        {igResult.caption && <p className="text-xs text-muted-foreground line-clamp-2">{igResult.caption}</p>}
+                        <div className="flex gap-2">
+                          <a href={`/api/instagram/proxy?url=${encodeURIComponent(igResult.mp4Url)}`} className="flex-1"><Button variant="secondary" className="w-full h-9"><Download className="h-4 w-4 mr-1.5" /> Descargar MP4</Button></a>
+                          <Button onClick={sendInstagramToViral} disabled={loading} className="flex-1 h-9 bg-primary text-primary-foreground hover:bg-primary/90 glow-primary"><Sparkles className="h-4 w-4 mr-1.5" /> Enviar a Whisper</Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground"><div className="flex-1 h-px bg-border" /> o sube un archivo <div className="flex-1 h-px bg-border" /></div>
+                  <MediaUploader onGenerate={runVision} loading={loading} />
+                </TabsContent>
               </Tabs>
             </CardContent>
           </Card>

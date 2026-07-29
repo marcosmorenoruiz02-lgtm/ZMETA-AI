@@ -254,28 +254,53 @@ Responde ÚNICAMENTE con JSON válido con esta estructura EXACTA (en español):
 }
 
 // Transcripción de audio/video vía Whisper (proxy Emergent, OpenAI-compatible)
+async function transcribeBuffer(buf, mime, ext) {
+  if (buf.length > 25 * 1024 * 1024) throw new Error('El archivo supera el límite de 25MB para transcripción')
+  const form = new FormData()
+  form.append('model', 'whisper-1')
+  form.append('response_format', 'json')
+  form.append('file', new Blob([buf], { type: mime }), `media.${ext}`)
+  const res = await fetch(`${LLM_BASE}/audio/transcriptions`, { method: 'POST', headers: { Authorization: `Bearer ${LLM_KEY}` }, body: form })
+  if (!res.ok) { const t = await res.text(); throw new Error(`Whisper error (${res.status}): ${t.slice(0, 200)}`) }
+  const j = await res.json()
+  return j?.text || ''
+}
+
 async function transcribeMedia(dataUrl) {
   const m = dataUrl.match(/^data:([^;]+);base64,(.*)$/s)
   if (!m) return ''
   const mime = m[1]
   const buf = Buffer.from(m[2], 'base64')
-  if (buf.length > 25 * 1024 * 1024) throw new Error('El archivo supera el límite de 25MB para transcripción')
   const ext = mime.includes('wav') ? 'wav' : mime.includes('mp4') ? 'mp4' : mime.includes('quicktime') || mime.includes('mov') ? 'mov' : mime.includes('webm') ? 'webm' : 'mp3'
-  const form = new FormData()
-  form.append('model', 'whisper-1')
-  form.append('response_format', 'json')
-  form.append('file', new Blob([buf], { type: mime }), `media.${ext}`)
-  const res = await fetch(`${LLM_BASE}/audio/transcriptions`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${LLM_KEY}` },
-    body: form,
-  })
-  if (!res.ok) {
-    const t = await res.text()
-    throw new Error(`Whisper error (${res.status}): ${t.slice(0, 200)}`)
+  return transcribeBuffer(buf, mime, ext)
+}
+
+// ----------------------------- Instagram (RapidAPI) -----------------------------
+function isInstagramUrl(u) {
+  return /^https?:\/\/(www\.)?instagram\.com\/(reel|reels|p|tv)\/[\w\-]+/i.test(u || '')
+}
+
+async function igExtract(url) {
+  const host = process.env.RAPIDAPI_HOST_INSTAGRAM
+  const api = `https://${host}/unified/url?url=${encodeURIComponent(url)}`
+  const r = await fetch(api, { headers: { 'x-rapidapi-key': process.env.RAPIDAPI_KEY, 'x-rapidapi-host': host }, cache: 'no-store' })
+  let json = {}
+  try { json = await r.json() } catch (e) {}
+  if (!r.ok || !json?.success) {
+    const msg = json?.error?.message || `No se pudo extraer el contenido de Instagram (${r.status})`
+    const err = new Error(msg)
+    err.status = r.status === 403 ? 403 : 422
+    throw err
   }
-  const j = await res.json()
-  return j?.text || ''
+  const content = json?.data?.content || {}
+  let mp4Url = content.media_url || null
+  let thumbnail = content.thumbnail_url || null
+  if (!mp4Url && Array.isArray(content.items)) {
+    const v = content.items.find((i) => i?.media_url)
+    mp4Url = v?.media_url || null
+    thumbnail = thumbnail || v?.thumbnail_url || null
+  }
+  return { mp4Url, thumbnail, caption: json?.data?.title || '', mediaType: json?.media_type || 'video' }
 }
 
 const TEMPLATE_LABELS = {
@@ -507,6 +532,89 @@ Devuelve ÚNICAMENTE un JSON con esta estructura EXACTA:
       const items = await database.collection('scheduled').find({}).sort({ scheduledAt: 1 }).limit(50).toArray()
       const cleaned = items.map(({ _id, ...rest }) => rest)
       return handleCORS(NextResponse.json({ items: cleaned, count: cleaned.length }))
+    }
+
+    // Instagram: extraer metadatos + MP4 (RapidAPI 7scorp)
+    if (route === '/instagram/download' && method === 'POST') {
+      const body = await request.json()
+      const url = (body?.url || '').trim()
+      if (!isInstagramUrl(url)) {
+        return handleCORS(NextResponse.json({ error: 'URL de Instagram no válida. Usa un enlace de reel/p/tv.' }, { status: 400 }))
+      }
+      try {
+        const data = await igExtract(url)
+        if (!data.mp4Url) {
+          return handleCORS(NextResponse.json({ error: 'No se encontró vídeo MP4 en ese enlace (¿es una foto o cuenta privada?).' }, { status: 422 }))
+        }
+        return handleCORS(NextResponse.json({ ok: true, url, ...data }))
+      } catch (e) {
+        return handleCORS(NextResponse.json({ error: e?.message || 'Fallo al extraer de Instagram' }, { status: e?.status || 502 }))
+      }
+    }
+
+    // Instagram: proxy de descarga (fuerza attachment, evita CORS)
+    if (route === '/instagram/proxy' && method === 'GET') {
+      const { searchParams } = new URL(request.url)
+      const u = searchParams.get('url')
+      if (!u) return handleCORS(NextResponse.json({ error: 'url requerido' }, { status: 400 }))
+      const rr = await fetch(u)
+      if (!rr.ok) return handleCORS(NextResponse.json({ error: 'No se pudo descargar el vídeo' }, { status: 502 }))
+      const headers = new Headers()
+      headers.set('Content-Type', rr.headers.get('content-type') || 'video/mp4')
+      headers.set('Content-Disposition', 'attachment; filename="viralforge-reel.mp4"')
+      headers.set('Access-Control-Allow-Origin', '*')
+      return new NextResponse(rr.body, { status: 200, headers })
+    }
+
+    // Instagram: descargar + transcribir (Whisper) + visión (thumbnail) + generar
+    if (route === '/instagram/analyze' && method === 'POST') {
+      const body = await request.json()
+      const url = (body?.url || '').trim()
+      const note = (body?.note || '').trim()
+      if (!isInstagramUrl(url)) {
+        return handleCORS(NextResponse.json({ error: 'URL de Instagram no válida.' }, { status: 400 }))
+      }
+      let meta
+      try { meta = await igExtract(url) } catch (e) { return handleCORS(NextResponse.json({ error: e?.message || 'Fallo al extraer de Instagram' }, { status: e?.status || 502 })) }
+      if (!meta.mp4Url) return handleCORS(NextResponse.json({ error: 'No se encontró vídeo MP4 en ese enlace.' }, { status: 422 }))
+
+      // Transcripción del audio del reel
+      let transcript = '', transcriptError = null
+      try {
+        const vr = await fetch(meta.mp4Url)
+        const buf = Buffer.from(await vr.arrayBuffer())
+        if (buf.length <= 25 * 1024 * 1024) transcript = await transcribeBuffer(buf, 'video/mp4', 'mp4')
+        else transcriptError = 'Vídeo >25MB: audio no transcrito'
+      } catch (e) { transcriptError = e?.message || 'Transcripción no disponible' }
+
+      // Thumbnail como contexto visual
+      let image = null
+      try {
+        if (meta.thumbnail) {
+          const tr = await fetch(meta.thumbnail)
+          const tb = Buffer.from(await tr.arrayBuffer())
+          const mt = tr.headers.get('content-type') || 'image/jpeg'
+          image = `data:${mt};base64,${tb.toString('base64')}`
+        }
+      } catch (e) {}
+
+      const userContent = [{ type: 'text', text: buildVisionPrompt(note || meta.caption, transcript) }]
+      if (image) userContent.push({ type: 'image_url', image_url: { url: image } })
+      const result = await rawGeminiJSON([{ role: 'system', content: SYSTEM }, { role: 'user', content: userContent }], 0.85)
+      const metrics = await bumpMetrics(database, 3, 1)
+      const audio = result?.audio || { transcript: '', keyQuotes: [], tone: 'Sin audio' }
+      if (transcript && !audio.transcript) audio.transcript = transcript
+      if (transcriptError) audio.error = transcriptError
+
+      const payload = {
+        id: uuidv4(), mode: 'media', source: 'instagram', igUrl: url, mp4Url: meta.mp4Url, thumbnail: meta.thumbnail, caption: meta.caption,
+        vision: result?.vision || null, audio, combined_hook_angle: result?.combined_hook_angle || '',
+        analysis: { patternAnalysis: result?.patternAnalysis || null, generatedTweets: result?.generatedTweets || [] },
+        growth: result?.growth || null, metrics, createdAt: new Date(),
+      }
+      await database.collection('analyses').insertOne({ ...payload })
+      const { _id, ...clean } = payload
+      return handleCORS(NextResponse.json(clean))
     }
 
     // Historial

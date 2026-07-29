@@ -364,6 +364,81 @@ backend:
         -agent: "testing"
         -comment: "✅ PASSED - Tested 3 consecutive calls to GET /api/schedule: Call 1 (200, 0.26s), Call 2 (200, 0.13s), Call 3 (200, 0.23s). All calls successful with valid response structure (items array, count field). No 500 errors observed. Stability confirmed."
 
+  - task: "INSTAGRAM INTEGRATION - POST /api/instagram/download (validation)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "POST /api/instagram/download validates Instagram URL format using isInstagramUrl regex. Returns 400 for invalid URLs or empty body with Spanish error message 'URL de Instagram no válida. Usa un enlace de reel/p/tv.'"
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Validation working correctly. TEST 1: Invalid URL (https://google.com/x) returns HTTP 400 with error 'URL de Instagram no válida. Usa un enlace de reel/p/tv.' TEST 2: Empty body {} returns HTTP 400 with same error message. Error messages in Spanish as expected. All validation tests passed."
+
+  - task: "INSTAGRAM INTEGRATION - POST /api/instagram/download (error handling)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "POST /api/instagram/download handles RapidAPI errors gracefully. Returns structured error (422 or 502) with error message, NOT unhandled 500 crash. Uses igExtract function (lines 283-304) with try-catch error handling."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Error handling working correctly. Tested with likely non-existent reel URL (https://www.instagram.com/reel/C5qLpAqL8yF/). Returns HTTP 422 in 21.17s with structured error response: {\"error\": \"Failed to parse Instagram data. Please try again.\"}. No stacktrace, no 500 crash. Clean error handling confirmed."
+
+  - task: "INSTAGRAM INTEGRATION - POST /api/instagram/download (success path)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "POST /api/instagram/download extracts Instagram reel metadata via RapidAPI 7scorp instagram downloader. Returns {ok:true, url, mp4Url, thumbnail, caption, mediaType}. RapidAPI credentials: RAPIDAPI_KEY and RAPIDAPI_HOST_INSTAGRAM from .env."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Success path working correctly. Found live public reel URL: https://www.instagram.com/reel/DGEIbOCRlxn/ (NASA Earth). Returns HTTP 200 in 1.97s with complete response structure: ok=true, mp4Url (instagram.fiev22-1.fna.fbcdn.net domain), thumbnail (valid URL), caption (\"nasaearth's Post\"), mediaType=\"video\". RapidAPI key confirmed working (returns structured JSON, not 403). All required fields present."
+
+  - task: "INSTAGRAM INTEGRATION - POST /api/instagram/analyze (full analysis)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "POST /api/instagram/analyze downloads reel, transcribes audio with Whisper, analyzes thumbnail with Gemini Vision, generates 3 tweets with scores. Returns {vision, audio, combined_hook_angle, analysis.generatedTweets[3], growth, metrics}. Allows up to 90s timeout (Whisper+Gemini are slow)."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Full analysis working correctly. Tested with live NASA Earth reel (https://www.instagram.com/reel/DGEIbOCRlxn/). Returns HTTP 200 in 28.60s (within 90s timeout). Response structure validated: vision object (present), audio object with transcript (length: 3 chars), combined_hook_angle (\"La sorprendente yuxtaposición de datos científicos...\"), analysis.generatedTweets (EXACTLY 3 items, all with required fields: style/text/rationale/hookStrength/retention/weakPoint/firstSelfReply/thread), growth object (topBanners: 3 items, loopOutro, replyStrategy), metrics (posts: 242, diagnostics: 79, hours_saved: 140.75). All validations passed. Whisper transcription and Gemini Vision integration working correctly."
+
+  - task: "INSTAGRAM INTEGRATION - GET /api/instagram/proxy (download proxy)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "GET /api/instagram/proxy proxies video download with Content-Disposition: attachment header to force download and avoid CORS. Returns 400 if url parameter missing, 502 if URL unreachable, 200 with video stream if successful."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Proxy endpoint working correctly. TEST 1: Missing url parameter returns HTTP 400 with error \"url requerido\". TEST 2: Valid URL (https://httpbin.org/image/png) returns HTTP 200 with Content-Disposition: attachment; filename=\"viralforge-reel.mp4\" header. Content-Type header present. TEST 3: Unreachable Instagram CDN URL returns HTTP 502 (expected behavior). All proxy functionality working as designed."
+
 frontend:
   - task: "UI premium dark mode con tabs Usuario/Tematica, grid de resultados y boton copiar"
     implemented: true
@@ -405,3 +480,5 @@ agent_communication:
     -message: "ZMETA-AI MULTIMEDIA ENDPOINTS TESTING COMPLETED ✅ - All three new backend endpoints PASSED all tests: (1) POST /api/vision-generate - HTTP 200, vision object with description/ocr/tone/subjects, analysis.generatedTweets EXACTLY 3 items with all score fields (hookStrength/retention/weakPoint), validations working (400 for invalid/missing image). OCR correctly extracted 'OFERTA IA 90% descuento' from test image. (2) POST /api/text-template - All three formats (thread/controversy/myth) return HTTP 200 with analysis.patternAnalysis and generatedTweets (EXACTLY 3 items with all score fields), validations working (400 for invalid format/missing topic). (3) POST/GET /api/schedule - POST creates draft with correct structure (id/text/scheduledAt/status='scheduled'/count), GET retrieves drafts correctly (items array/count), validation working (400 for missing text). All backend tasks now working=true, needs_retesting=false. Ready for main agent to summarize and finish."
     -agent: "testing"
     -message: "REGRESSION + NEW FEATURE TEST COMPLETED ✅ - Twitter API credits RECHARGED, all endpoints now fully functional. Tested 4 critical scenarios with NEW validations: (1) USER MODE (@MorrrMorrr63705): HTTP 200 in 25.06s, 6 originalTweets correctly sorted by weighted engagement score (likes + retweets*2 + replies*1.5 + quotes*3 + views*0.01) in DESCENDING order [7.73, 7.7, 4.98, 4.98, 4.42], 3 generatedTweets with ALL required fields including 'thread' array. (2) TOPIC MODE (Inteligencia Artificial, minFaves=100): HTTP 200 in 19.79s, 10 originalTweets correctly sorted [3695.88, 2268.84, 916.74, 841.82, 510.19], 3 generatedTweets with thread field. (3) VISION MODE: HTTP 200 in 14.46s, vision/audio/combined_hook_angle present, 3 generatedTweets with thread field. (4) TEXT TEMPLATE (format=thread, topic=Productividad): HTTP 200 in 17.86s, 3 generatedTweets with thread field. ✅ ALL NEW VALIDATIONS PASSED: (a) Weighted engagement sorting verified as DESCENDING, (b) ALL generated tweets have 'thread' field (array, may be empty), (c) NO placeholder tokens ([IMAGEN], [VIDEO], [LINK]) found in any generated text, (d) 280/thread rule compliance verified (text <= 280 OR thread.length >= 2). 🔧 MINOR FIX APPLIED: Added 'thread': [] to JSON structure examples in buildPrompt, buildVisionPrompt, and buildTemplatePrompt (lines 178-180, 214-216, 270-272) to ensure Gemini consistently returns thread field. All 27 test assertions PASSED across 4 endpoints. Backend fully operational and compliant with all requirements."
+    -agent: "testing"
+    -message: "INSTAGRAM INTEGRATION TESTING COMPLETED ✅ - All 5 Instagram endpoints PASSED comprehensive testing: (1) VALIDATION: POST /api/instagram/download with invalid URL (https://google.com/x) returns HTTP 400 with Spanish error 'URL de Instagram no válida. Usa un enlace de reel/p/tv.' Empty body {} also returns 400. (2) ERROR HANDLING: Non-existent reel URL returns HTTP 422 with structured error {\"error\": \"Failed to parse Instagram data. Please try again.\"} - NO 500 crash, NO stacktrace. (3) SUCCESS PATH: Found live public reel URL https://www.instagram.com/reel/DGEIbOCRlxn/ (NASA Earth). Returns HTTP 200 in 1.97s with complete structure: ok=true, mp4Url (instagram.fiev22-1.fna.fbcdn.net), thumbnail, caption, mediaType=\"video\". (4) ANALYZE: Full analysis with Whisper + Gemini completed in 28.60s (within 90s timeout). Returns vision, audio (transcript length: 3), combined_hook_angle, analysis.generatedTweets (EXACTLY 3 items with all required fields: style/text/rationale/hookStrength/retention/weakPoint/firstSelfReply/thread), growth object (topBanners: 3, loopOutro, replyStrategy), metrics (posts: 242, diagnostics: 79, hours_saved: 140.75). (5) PROXY: GET /api/instagram/proxy without url returns HTTP 400 'url requerido'. With valid URL returns HTTP 200 with Content-Disposition: attachment header. Unreachable URLs return HTTP 502 (expected). RapidAPI key confirmed working (returns structured JSON, not 403). All Instagram integration tasks marked working=true, needs_retesting=false. Backend fully operational."
