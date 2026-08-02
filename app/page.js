@@ -209,8 +209,8 @@ export default function App() {
     if (!query) { toast.error(mode === 'user' ? 'Introduce un @username' : 'Introduce o elige una temática'); return }
     runGeneric({ apiPath: '/api/analyze-and-generate', apiBody: { type: mode, query, minFaves }, label: `${mode === 'user' ? '👤' : '#'} ${query}`, focus: mode === 'user' ? `Escaneando el perfil ${query}` : `Escaneando la tendencia "${query}"` })
   }
-  const runVision = ({ image, media, mediaType, preview, note }) => {
-    runGeneric({ apiPath: '/api/vision-generate', apiBody: { image, media, mediaType, note }, label: `🎬 Media (${mediaType})`, media: preview, focus: 'Analizando media: visión + audio (Whisper)…' })
+  const runVision = ({ image, frames, media, mediaType, preview, note }) => {
+    runGeneric({ apiPath: '/api/vision-generate', apiBody: { image, frames, media, mediaType, note }, label: `🎬 Media (${mediaType})`, media: preview, focus: 'Análisis forense: keyframes + audio (Whisper)…' })
   }
   const runTemplate = (format) => {
     const topic = expressTopic.trim()

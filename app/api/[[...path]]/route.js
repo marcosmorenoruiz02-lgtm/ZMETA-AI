@@ -255,12 +255,12 @@ function buildPersonalityPrompt(mode, query, tweets) {
     })
     .join('\n')
   const who = mode === 'user' ? `del autor de la cuenta ${query}` : `del arquetipo de creador que domina la temática "${query}"`
-  return `Analiza EXCLUSIVAMENTE el contenido publicado ${who}: los tweets siguientes y las imágenes/miniaturas adjuntas (si las hay). NO uses biografía, NO uses información externa, NO inventes rasgos. Si un rasgo no puede inferirse del contenido, escribe "n/d".
+  return `Analiza EXCLUSIVAMENTE el contenido publicado ${who}: los tweets siguientes y las imágenes/miniaturas adjuntas (si las hay). NO uses biografía, NO uses información externa, NO inventes rasgos, NO infieras intención ni ideología no evidenciada. Cada rasgo debe poder justificarse con el contenido observable. Si un rasgo NO puede inferirse con seguridad del contenido, escribe EXACTAMENTE "${NO_EVIDENCE}" en ese campo (prefiere la incertidumbre antes que alucinar).
 
 CONTENIDO PUBLICADO:
 ${context}
 
-Construye la PERSONALIDAD DIGITAL como un objeto JSON EXACTO con estas claves (valores breves en español; usa niveles "alto/medio/bajo" donde tenga sentido):
+Construye la PERSONALIDAD DIGITAL como un objeto JSON EXACTO con estas claves (valores breves en español; usa niveles "alto/medio/bajo" solo cuando el contenido lo respalde, de lo contrario "${NO_EVIDENCE}"):
 ${PERSONALITY_SCHEMA}
 
 Responde ÚNICAMENTE con ese JSON.`
@@ -282,17 +282,45 @@ async function validateVoice(personality, tweets) {
   try { const r = await rawGeminiJSON([{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt }], 0.2); return r?.scores || [] } catch (e) { return [] }
 }
 
-function buildVisionPrompt(note, transcript) {
-  return `Eres un experto en marketing viral para X. Analiza el material adjunto (puede incluir una imagen/fotograma de video y/o la transcripción del audio) y crea contenido listo para publicar.
+const NO_EVIDENCE = 'No hay suficiente evidencia para determinar este aspecto.'
 
-${note ? `Contexto/instrucción del usuario: "${note}"` : ''}
-${transcript ? `TRANSCRIPCIÓN DEL AUDIO (extraída del video o clip de audio):\n"""${transcript}"""` : 'No hay audio disponible en este material.'}
+const FORENSIC_INTRO = `Actúas como un ANALISTA FORENSE DE CONTENIDO MULTIMEDIA, NO como un escritor creativo. Tu único objetivo es reportar EVIDENCIA OBSERVABLE y verificable del material. La precisión, la robustez y la trazabilidad están SIEMPRE por encima de la creatividad. Ante la mínima duda, declara incertidumbre en lugar de inventar.`
 
-TAREAS:
-1. VISIÓN (si hay imagen): extrae contexto visual, sujetos, texto sobreimpreso (OCR) y tono visual.
-2. AUDIO (si hay transcripción): resume las frases/quotes clave y detecta el tono/ambiente sonoro (ej. música enérgica, diálogo conversacional, explicación tutorial, ruido ambiente).
-3. FUSIÓN: combina el contexto visual + audio en un ángulo de gancho unificado de alta retención.
-4. GENERACIÓN: crea EXACTAMENTE 3 posts para X inspirados en el material, en estilos distintos (Educativo / Lista, Provocativo / Opinión, Directo / Gancho corto).
+const FORENSIC_RULES = `PROHIBICIONES ABSOLUTAS (incumplirlas invalida el análisis):
+  - PROHIBIDO inventar emociones, mensajes, simbolismos, intención, metáforas, narrativa, contexto político o contexto social.
+  - PROHIBIDO convertir la AUSENCIA de contenido en un significado. Ejemplos PROHIBIDOS: "el vacío es el gancho", "el misterio invita a la introspección", "la nada representa X". Una pantalla negra es simplemente un fotograma sin elementos visuales discernibles, NADA MÁS.
+  - PROHIBIDO usar conocimiento externo, cultura general o suposiciones. SOLO cuenta lo directamente observable en los fotogramas, el OCR o la transcripción de audio.
+  - Solo puedes afirmar algo si puedes justificarlo con evidencia visual, textual o sonora CONCRETA y presente en el material.
+  - SISTEMA DE CONFIANZA: asigna a cada observación un "confidence" 0-100. Si un aspecto tiene confidence < 80, su valor DEBE ser EXACTAMENTE esta frase: "${NO_EVIDENCE}". Nunca lo rellenes con una interpretación.
+  - Prefiere SIEMPRE la incertidumbre explícita antes que una alucinación.`
+
+function buildVisionPrompt(note, transcript, frameCount = 1) {
+  const hasNote = !!(note && String(note).trim())
+  return `${FORENSIC_INTRO}
+
+MATERIAL DISPONIBLE PARA ESTE ANÁLISIS:
+- Fotogramas/imágenes adjuntos: ${frameCount > 0 ? `${frameCount} imagen(es) (keyframes representativos del contenido)` : 'ninguno'}
+- Audio: ${transcript ? 'SÍ (transcripción verificable abajo)' : 'NO disponible / sin transcripción'}
+- Nota de contexto del usuario: ${hasNote ? `"${String(note).trim()}"` : 'ninguna'}
+${transcript ? `\nTRANSCRIPCIÓN DEL AUDIO (Whisper — evidencia sonora verificable):\n"""${transcript}"""` : ''}
+
+${FORENSIC_RULES}
+
+FASES DEL ANÁLISIS (ejecútalas en orden):
+
+FASE A — EXTRACCIÓN FORENSE: describe SOLO hechos observables de cada fotograma y del audio. Cada campo lleva su confianza. Si una pantalla/imagen no tiene elementos discernibles, dilo literalmente y deja tono/sujetos como "${NO_EVIDENCE}".
+
+FASE B — LÍNEA TEMPORAL (si hay varios fotogramas): para cada frame reporta descripción objetiva, objetos, personas/acciones y texto visible, con confianza. Nada de interpretación.
+
+FASE C — ANÁLISIS DE AUDIO: separa transcripción / características de voz / emoción / ruidos / música / silencios, cada uno con su confianza. Si no hay audio, todos = "${NO_EVIDENCE}".
+
+FASE D — FUSIÓN TRAZABLE: consolida en "usableFacts" SOLO los hechos con confidence >= 80 (cada uno con fact, origen [imagen|ocr|audio|texto] y confidence). Los descartados (confianza <80 o subjetivos) van en "discarded" con su motivo. Fija "evidenceSufficient" = true SOLO si existe al menos 1 usableFact con contenido real (o una nota de usuario con contenido) suficiente para fundamentar un post.
+
+FASE E — GENERACIÓN CONDICIONADA A LA EVIDENCIA:
+  - Si evidenceSufficient = true: genera EXACTAMENTE 3 posts para X fundamentados ÚNICAMENTE en usableFacts (+ la nota del usuario si existe). CADA afirmación de cada post debe poder rastrearse a un usableFact concreto (indícalo en "rationale"). Prohibido añadir simbolismo, emociones o narrativa no verificados.
+  - Si evidenceSufficient = false: NO INVENTES. Devuelve EXACTAMENTE 3 posts cuyo "text" sea: "No hay suficiente evidencia en el material para generar un post fundamentado. Añade una nota de contexto o sube material con contenido verificable." con hookStrength 0, retention "Baja", weakPoint "Evidencia insuficiente", thread [], firstSelfReply "". Y "combined_hook_angle" = "${NO_EVIDENCE}".
+
+FASE F — AUTOVALIDACIÓN (obligatoria antes de responder): revisa tu propio JSON y corrige: (a) cualquier afirmación sin evidencia, (b) cualquier interpretación subjetiva, (c) cualquier campo con confidence<80 que no use la frase de incertidumbre exacta, (d) cualquier post que mencione algo no presente en usableFacts. Corrige TODO eso antes de emitir la respuesta final.
 
 ${SCORE_SPEC}
 
@@ -302,18 +330,20 @@ ${GROWTH_SPEC}
 
 Responde ÚNICAMENTE con JSON válido con esta estructura EXACTA (en español):
 {
-  "vision": { "description": "...", "ocr": "texto detectado o cadena vacía", "tone": "...", "subjects": ["...", "..."] },
-  "audio": { "transcript": "resumen o transcripción del audio (cadena vacía si no hay)", "keyQuotes": ["frase clave 1", "frase clave 2"], "tone": "tono/ambiente sonoro (o 'Sin audio')" },
-  "combined_hook_angle": "ángulo de gancho unificado audio+visual",
-  "patternAnalysis": {
-    "summary": "por qué este enfoque puede funcionar en X",
-    "hook": "...", "tone": "...", "length": "...", "format": "...",
-    "keyPatterns": ["...", "...", "..."]
+  "evidence": {
+    "evidenceSufficient": true,
+    "evidenceLevel": "alto|medio|bajo",
+    "usableFacts": [ { "fact": "hecho observable", "origen": "imagen", "confidence": 92 } ],
+    "discarded": [ { "fact": "afirmación descartada", "reason": "confianza <80 | interpretación subjetiva", "confidence": 40 } ]
   },
+  "vision": { "description": "descripción objetiva o '${NO_EVIDENCE}'", "descriptionConfidence": 90, "ocr": "texto detectado en pantalla o cadena vacía", "ocrConfidence": 95, "tone": "tono visual observable o '${NO_EVIDENCE}'", "toneConfidence": 60, "subjects": ["sujeto observable"], "timeline": [ { "t": "frame 1", "description": "...", "objetos": ["..."], "textoVisible": "...", "confidence": 88 } ] },
+  "audio": { "transcript": "transcripción/resumen o cadena vacía", "keyQuotes": ["frase textual del audio"], "tone": "tono sonoro observable o '${NO_EVIDENCE}'", "toneConfidence": 55, "music": "descripción o '${NO_EVIDENCE}'", "noises": "descripción o '${NO_EVIDENCE}'", "silence": "descripción o '${NO_EVIDENCE}'" },
+  "combined_hook_angle": "ángulo fundamentado SOLO en usableFacts, o '${NO_EVIDENCE}'",
+  "patternAnalysis": { "summary": "...", "hook": "...", "tone": "...", "length": "...", "format": "...", "keyPatterns": ["...", "...", "..."] },
   "generatedTweets": [
-    { "style": "Educativo / Lista", "text": "...", "rationale": "...", "hookStrength": 88, "retention": "Alta", "weakPoint": "...", "thread": [] },
-    { "style": "Provocativo / Opinión", "text": "...", "rationale": "...", "hookStrength": 84, "retention": "Media", "weakPoint": "...", "thread": [] },
-    { "style": "Directo / Gancho corto", "text": "...", "rationale": "...", "hookStrength": 91, "retention": "Alta", "weakPoint": "...", "thread": [] }
+    { "style": "Educativo / Lista", "text": "...", "rationale": "usableFacts en los que se basa", "hookStrength": 80, "retention": "Alta", "weakPoint": "...", "thread": [] },
+    { "style": "Provocativo / Opinión", "text": "...", "rationale": "...", "hookStrength": 78, "retention": "Media", "weakPoint": "...", "thread": [] },
+    { "style": "Directo / Gancho corto", "text": "...", "rationale": "...", "hookStrength": 82, "retention": "Alta", "weakPoint": "...", "thread": [] }
   ]
 }`
 }
@@ -509,10 +539,11 @@ async function handleRoute(request, { params }) {
       const image = body?.image
       const media = body?.media
       const note = (body?.note || '').trim()
+      const frames = Array.isArray(body?.frames) ? body.frames.filter((f) => typeof f === 'string' && f.startsWith('data:')) : []
       const hasImage = typeof image === 'string' && image.startsWith('data:')
       const hasMedia = typeof media === 'string' && media.startsWith('data:')
-      if (!hasImage && !hasMedia) {
-        return handleCORS(NextResponse.json({ error: "Se requiere 'image' o 'media' (data URL)" }, { status: 400 }))
+      if (!hasImage && !hasMedia && !frames.length) {
+        return handleCORS(NextResponse.json({ error: "Se requiere 'image', 'frames' o 'media' (data URL)" }, { status: 400 }))
       }
 
       // 1) Transcripción de audio (video o audio) vía Whisper
@@ -522,20 +553,22 @@ async function handleRoute(request, { params }) {
         try { transcript = await transcribeMedia(media) } catch (e) { transcriptError = e?.message || 'Transcripción no disponible' }
       }
 
-      // 2) Fusión audio + visión con Gemini
-      const userContent = [{ type: 'text', text: buildVisionPrompt(note, transcript) }]
-      if (hasImage) userContent.push({ type: 'image_url', image_url: { url: image } })
+      // 2) Análisis forense (visión + audio) con Gemini — múltiples keyframes, temperatura baja (0 creatividad)
+      const imgs = (frames.length ? frames : (hasImage ? [image] : [])).slice(0, 6)
+      const userContent = [{ type: 'text', text: buildVisionPrompt(note, transcript, imgs.length) }]
+      for (const u of imgs) userContent.push({ type: 'image_url', image_url: { url: u } })
 
-      const result = await rawGeminiJSON([{ role: 'system', content: SYSTEM }, { role: 'user', content: userContent }], 0.85)
+      const result = await rawGeminiJSON([{ role: 'system', content: SYSTEM }, { role: 'user', content: userContent }], 0.15)
       const metrics = await bumpMetrics(database, 3, 1)
 
-      const audio = result?.audio || { transcript: '', keyQuotes: [], tone: 'Sin audio' }
+      const audio = result?.audio || { transcript: '', keyQuotes: [], tone: NO_EVIDENCE }
       if (transcript && !audio.transcript) audio.transcript = transcript
       if (transcriptError) audio.error = transcriptError
 
       const payload = {
         id: uuidv4(),
         mode: 'media',
+        evidence: result?.evidence || null,
         vision: result?.vision || null,
         audio,
         combined_hook_angle: result?.combined_hook_angle || '',
@@ -681,16 +714,17 @@ Devuelve ÚNICAMENTE un JSON con esta estructura EXACTA:
         }
       } catch (e) {}
 
-      const userContent = [{ type: 'text', text: buildVisionPrompt(note || meta.caption, transcript) }]
+      const userContent = [{ type: 'text', text: buildVisionPrompt(note || meta.caption, transcript, image ? 1 : 0) }]
       if (image) userContent.push({ type: 'image_url', image_url: { url: image } })
-      const result = await rawGeminiJSON([{ role: 'system', content: SYSTEM }, { role: 'user', content: userContent }], 0.85)
+      const result = await rawGeminiJSON([{ role: 'system', content: SYSTEM }, { role: 'user', content: userContent }], 0.15)
       const metrics = await bumpMetrics(database, 3, 1)
-      const audio = result?.audio || { transcript: '', keyQuotes: [], tone: 'Sin audio' }
+      const audio = result?.audio || { transcript: '', keyQuotes: [], tone: NO_EVIDENCE }
       if (transcript && !audio.transcript) audio.transcript = transcript
       if (transcriptError) audio.error = transcriptError
 
       const payload = {
         id: uuidv4(), mode: 'media', source: 'instagram', igUrl: url, mp4Url: meta.mp4Url, thumbnail: meta.thumbnail, caption: meta.caption,
+        evidence: result?.evidence || null,
         vision: result?.vision || null, audio, combined_hook_angle: result?.combined_hook_angle || '',
         analysis: { patternAnalysis: result?.patternAnalysis || null, generatedTweets: result?.generatedTweets || [] },
         growth: result?.growth || null, metrics, createdAt: new Date(),

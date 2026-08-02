@@ -15,30 +15,48 @@ function readAsDataURL(file) {
   })
 }
 
-// Extrae un fotograma representativo del video en el cliente (sin ffmpeg)
-function extractFrame(url) {
+// Extrae varios keyframes representativos del video en el cliente (sin ffmpeg)
+function extractFrames(url, count = 5) {
   return new Promise((resolve) => {
     const v = document.createElement('video')
     v.muted = true
     v.playsInline = true
+    v.crossOrigin = 'anonymous'
     v.src = url
-    v.onloadeddata = () => { try { v.currentTime = Math.min(1.5, (v.duration || 2) / 2) } catch (e) { resolve(null) } }
+    const frames = []
+    let targets = []
+    let idx = 0
+    const grab = (time) => { try { v.currentTime = time } catch (e) { finish() } }
+    const finish = () => resolve(frames.length ? frames : [])
+    v.onloadeddata = () => {
+      const dur = v.duration && isFinite(v.duration) ? v.duration : 2
+      // muestrea puntos representativos a lo largo del clip (evita el frame 0 y el último exacto)
+      const n = Math.max(1, Math.min(count, Math.round(dur >= 3 ? count : 2)))
+      targets = Array.from({ length: n }, (_, i) => Math.min(dur - 0.05, (dur * (i + 1)) / (n + 1)))
+      grab(targets[0])
+    }
     v.onseeked = () => {
       try {
         const c = document.createElement('canvas')
         c.width = v.videoWidth || 640
         c.height = v.videoHeight || 360
         c.getContext('2d').drawImage(v, 0, 0, c.width, c.height)
-        resolve(c.toDataURL('image/jpeg', 0.85))
-      } catch (e) { resolve(null) }
+        frames.push(c.toDataURL('image/jpeg', 0.82))
+      } catch (e) {}
+      idx += 1
+      if (idx < targets.length) grab(targets[idx])
+      else finish()
     }
-    v.onerror = () => resolve(null)
+    v.onerror = () => finish()
+    // salvaguarda de tiempo
+    setTimeout(() => finish(), 8000)
   })
 }
 
 export default function MediaUploader({ onGenerate, loading }) {
   const [preview, setPreview] = useState(null)
   const [image, setImage] = useState(null)
+  const [frames, setFrames] = useState([])
   const [media, setMedia] = useState(null)
   const [mediaType, setMediaType] = useState(null)
   const [note, setNote] = useState('')
@@ -52,18 +70,18 @@ export default function MediaUploader({ onGenerate, loading }) {
     try {
       if (file.type.startsWith('image/')) {
         const dataUrl = await readAsDataURL(file)
-        setImage(dataUrl); setMedia(null); setMediaType('image')
+        setImage(dataUrl); setFrames([dataUrl]); setMedia(null); setMediaType('image')
         setPreview({ url: dataUrl, type: 'image' })
       } else if (file.type.startsWith('video/')) {
         const objUrl = URL.createObjectURL(file)
-        const frame = await extractFrame(objUrl)
+        const kf = await extractFrames(objUrl, 5)
         const full = file.size <= MAX_MEDIA ? await readAsDataURL(file) : null
-        setImage(frame); setMedia(full); setMediaType('video')
-        setPreview({ url: objUrl, type: 'video', poster: frame, tooBig: !full })
+        setImage(kf[0] || null); setFrames(kf); setMedia(full); setMediaType('video')
+        setPreview({ url: objUrl, type: 'video', poster: kf[0] || null, tooBig: !full, frameCount: kf.length })
       } else if (file.type.startsWith('audio/')) {
         const objUrl = URL.createObjectURL(file)
         const full = file.size <= MAX_MEDIA ? await readAsDataURL(file) : null
-        setImage(null); setMedia(full); setMediaType('audio')
+        setImage(null); setFrames([]); setMedia(full); setMediaType('audio')
         setPreview({ url: objUrl, type: 'audio', tooBig: !full })
       } else {
         alert('Formato no soportado. Usa imagen (.png/.jpg/.webp), video (.mp4/.mov) o audio (.mp3/.wav).')
@@ -76,8 +94,8 @@ export default function MediaUploader({ onGenerate, loading }) {
     }
   }
 
-  const clear = () => { setPreview(null); setImage(null); setMedia(null); setMediaType(null) }
-  const canGenerate = !!image || !!media
+  const clear = () => { setPreview(null); setImage(null); setFrames([]); setMedia(null); setMediaType(null) }
+  const canGenerate = !!image || !!media || frames.length > 0
 
   return (
     <div>
@@ -112,14 +130,14 @@ export default function MediaUploader({ onGenerate, loading }) {
             </div>
           )}
           <button onClick={clear} className="absolute top-2 right-2 h-8 w-8 rounded-full bg-black/60 backdrop-blur flex items-center justify-center text-white hover:bg-black/80"><X className="h-4 w-4" /></button>
-          {preview.type === 'video' && (<div className="absolute bottom-2 left-2 text-[10px] px-2 py-1 rounded-md bg-black/60 text-white">Fotograma + audio analizados</div>)}
+          {preview.type === 'video' && (<div className="absolute bottom-2 left-2 text-[10px] px-2 py-1 rounded-md bg-black/60 text-white">{preview.frameCount > 1 ? `${preview.frameCount} keyframes + audio analizados` : 'Fotograma + audio analizados'}</div>)}
           {preview.tooBig && (<div className="absolute bottom-2 right-2 text-[10px] px-2 py-1 rounded-md bg-amber-600/80 text-white">Audio &gt;24MB: no se transcribirá</div>)}
         </div>
       )}
 
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Contexto opcional (ej. tono, producto, objetivo del post)" className="mt-3 w-full rounded-xl border border-border bg-background/50 px-3 py-2.5 text-sm text-foreground outline-none focus:border-primary/60 transition-colors" />
 
-      <Button onClick={() => canGenerate && onGenerate({ image, media, mediaType, preview, note })} disabled={!canGenerate || busy || loading} className="mt-3 w-full h-11 bg-primary text-primary-foreground hover:bg-primary/90 glow-primary">
+      <Button onClick={() => canGenerate && onGenerate({ image, frames, media, mediaType, preview, note })} disabled={!canGenerate || busy || loading} className="mt-3 w-full h-11 bg-primary text-primary-foreground hover:bg-primary/90 glow-primary">
         {loading ? (<><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Analizando media...</>) : (<><Sparkles className="h-4 w-4 mr-2" /> Generar post desde la media</>)}
       </Button>
     </div>
