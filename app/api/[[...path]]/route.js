@@ -214,7 +214,7 @@ FASE 2 - INGENIERÍA INVERSA VIRAL: Genera EXACTAMENTE 3 propuestas de tweets nu
   1. Un Tweet Educativo / Lista
   2. Un Tweet Provocativo / Opinión
   3. Un Tweet Directo / Gancho corto
-
+${personality ? '\nAUTOEVALUACIÓN DE VOZ: para CADA tweet incluye un campo "voiceScore" (entero 0-100) que mida QUÉ TAN FIEL suena a la voz del autor (tono, vocabulario, estructura, humor, ironía, ritmo, forma de empezar/cerrar). Reescribe internamente hasta que cada voiceScore sea >= 90 antes de responder.\n' : ''}
 ${SCORE_SPEC}
 
 ${COPY_RULES}
@@ -228,9 +228,9 @@ Responde ÚNICAMENTE con un objeto JSON válido con esta estructura EXACTA (en e
     "keyPatterns": ["patrón 1", "patrón 2", "patrón 3", "patrón 4"]
   },
   "generatedTweets": [
-    { "style": "Educativo / Lista", "text": "...", "rationale": "...", "hookStrength": 87, "retention": "Alta", "weakPoint": "...", "thread": [] },
-    { "style": "Provocativo / Opinión", "text": "...", "rationale": "...", "hookStrength": 82, "retention": "Media", "weakPoint": "...", "thread": [] },
-    { "style": "Directo / Gancho corto", "text": "...", "rationale": "...", "hookStrength": 90, "retention": "Alta", "weakPoint": "...", "thread": [] }
+    { "style": "Educativo / Lista", "text": "...", "rationale": "...", "hookStrength": 87, "retention": "Alta", "weakPoint": "...", "thread": []${personality ? ', "voiceScore": 95' : ''} },
+    { "style": "Provocativo / Opinión", "text": "...", "rationale": "...", "hookStrength": 82, "retention": "Media", "weakPoint": "...", "thread": []${personality ? ', "voiceScore": 93' : ''} },
+    { "style": "Directo / Gancho corto", "text": "...", "rationale": "...", "hookStrength": 90, "retention": "Alta", "weakPoint": "...", "thread": []${personality ? ', "voiceScore": 96' : ''} }
   ]
 }
 
@@ -478,25 +478,20 @@ async function handleRoute(request, { params }) {
       // MEJORA 1: construir la personalidad digital ANTES de generar
       const personality = await computePersonality(type, query, originalTweets)
 
-      // MEJORA 2/8: generar en la voz del autor
+      // MEJORA 2/8/9: generar en la voz del autor con autoevaluación de fidelidad inline
+      // (voiceScore lo reporta el mismo modelo => 2 llamadas Gemini en total, dentro del timeout del proxy)
       let analysis = await callGemini(buildPrompt(type, query, originalTweets, personality))
 
-      // MEJORA 9: validación de fidelidad de voz + regeneración si <90
-      let voiceScores = await validateVoice(personality, analysis?.generatedTweets || [])
-      const minScore = voiceScores.length ? Math.min(...voiceScores.map((s) => s.voiceScore || 0)) : 100
-      if (personality && minScore < 90) {
-        const fb = voiceScores.filter((s) => (s.voiceScore || 0) < 90).map((s) => `#${s.index}: ${s.issue}`).join(' | ')
-        const retryPrompt = buildPrompt(type, query, originalTweets, personality) +
-          `\n\nCORRECCIÓN OBLIGATORIA: la versión previa NO sonaba suficientemente al autor (${fb}). Reescribe los 3 tweets elevando la fidelidad de voz por encima de 90/100, sin perder el potencial viral.`
-        const retry = await callGemini(retryPrompt)
-        if (retry?.generatedTweets?.length) {
-          analysis = retry
-          voiceScores = await validateVoice(personality, analysis.generatedTweets)
-        }
-      }
-      // adjuntar voiceScore a cada tweet
+      // normalizar voiceScore por tweet (si el modelo no lo devolvió, dejar null)
       if (analysis?.generatedTweets) {
-        analysis.generatedTweets = analysis.generatedTweets.map((t, i) => ({ ...t, voiceScore: voiceScores.find((s) => s.index === i)?.voiceScore ?? null }))
+        analysis.generatedTweets = analysis.generatedTweets.map((t) => {
+          let vs = t.voiceScore
+          if (typeof vs === 'string') vs = parseInt(vs, 10)
+          if (!personality) vs = null
+          else if (typeof vs !== 'number' || isNaN(vs)) vs = null
+          else vs = Math.max(0, Math.min(100, Math.round(vs)))
+          return { ...t, voiceScore: vs }
+        })
       }
 
       const metrics = await bumpMetrics(database, 3, 1)
