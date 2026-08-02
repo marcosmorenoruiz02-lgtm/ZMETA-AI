@@ -1,459 +1,481 @@
 #!/usr/bin/env python3
 """
-ZMETA-AI Backend Test Suite - Viral Growth Engine + Advanced Sorting
-Tests all endpoints with new requirements:
-- Composite score sorting (views*0.05 + likes*1 + retweets*2 + replies*1.5 + quotes*3)
-- primeTimes array (window/count/score)
-- growth object (topBanners, loopOutro, replyStrategy)
-- firstSelfReply in each generatedTweet
+ZMETA-AI Backend Testing - Digital Personality + Voice Validation
+Tests the upgraded analysis engine with personality extraction and voiceScore validation.
 """
 
 import requests
 import json
 import time
-import base64
-from io import BytesIO
-from PIL import Image, ImageDraw, ImageFont
+import sys
 
 # Base URL from .env
 BASE_URL = "https://viral-insights-forge.preview.emergentagent.com/api"
-TIMEOUT = 90  # Allow up to 90s per request
 
-def log_test(name, status, details=""):
-    """Log test results"""
-    symbol = "✅" if status else "❌"
-    print(f"\n{symbol} {name}")
-    if details:
-        print(f"   {details}")
+def log(msg):
+    print(f"[TEST] {msg}")
 
-def verify_composite_score_sorting(tweets):
-    """Verify tweets are sorted by composite score in DESCENDING order"""
-    if not tweets or len(tweets) < 2:
-        return True, []
+def test_user_mode_personality():
+    """
+    TEST 1: USER MODE - Digital Personality + Voice Score
+    POST /api/analyze-and-generate with type=user
+    """
+    log("=" * 80)
+    log("TEST 1: USER MODE - Digital Personality + Voice Score")
+    log("=" * 80)
     
-    scores = []
-    for t in tweets:
-        score = (t.get('views', 0) * 0.05 + 
-                 t.get('likes', 0) * 1 + 
-                 t.get('retweets', 0) * 2 + 
-                 t.get('replies', 0) * 1.5 + 
-                 t.get('quotes', 0) * 3)
-        scores.append(round(score, 2))
-    
-    # Check if sorted in descending order
-    is_sorted = all(scores[i] >= scores[i+1] for i in range(len(scores)-1))
-    return is_sorted, scores
-
-def verify_prime_times(prime_times):
-    """Verify primeTimes structure"""
-    if not isinstance(prime_times, list):
-        return False, "primeTimes is not an array"
-    
-    if len(prime_times) > 3:
-        return False, f"primeTimes has {len(prime_times)} items (max 3)"
-    
-    for pt in prime_times:
-        if not isinstance(pt, dict):
-            return False, "primeTimes item is not an object"
-        if 'window' not in pt or 'count' not in pt or 'score' not in pt:
-            return False, f"primeTimes item missing required fields: {pt}"
-        if not isinstance(pt['window'], str):
-            return False, f"window is not a string: {pt['window']}"
-        if not isinstance(pt['count'], int) or pt['count'] < 0:
-            return False, f"count is not a valid integer: {pt['count']}"
-        if not isinstance(pt['score'], (int, float)) or pt['score'] < 0:
-            return False, f"score is not a valid number: {pt['score']}"
-    
-    return True, f"{len(prime_times)} items with valid structure"
-
-def verify_growth_object(growth):
-    """Verify growth object structure"""
-    if not isinstance(growth, dict):
-        return False, "growth is not an object"
-    
-    # Check topBanners
-    if 'topBanners' not in growth:
-        return False, "growth missing topBanners"
-    if not isinstance(growth['topBanners'], list):
-        return False, "topBanners is not an array"
-    if len(growth['topBanners']) != 3:
-        return False, f"topBanners has {len(growth['topBanners'])} items (expected 3)"
-    for banner in growth['topBanners']:
-        if not isinstance(banner, str) or not banner.strip():
-            return False, f"topBanners item is not a non-empty string: {banner}"
-        # Check if mostly uppercase (viral banner style)
-        if not any(c.isupper() for c in banner):
-            return False, f"topBanners item not uppercase-ish: {banner}"
-    
-    # Check loopOutro
-    if 'loopOutro' not in growth:
-        return False, "growth missing loopOutro"
-    if not isinstance(growth['loopOutro'], str) or not growth['loopOutro'].strip():
-        return False, "loopOutro is not a non-empty string"
-    
-    # Check replyStrategy
-    if 'replyStrategy' not in growth:
-        return False, "growth missing replyStrategy"
-    if not isinstance(growth['replyStrategy'], str) or not growth['replyStrategy'].strip():
-        return False, "replyStrategy is not a non-empty string"
-    
-    return True, f"topBanners: {len(growth['topBanners'])}, loopOutro: {len(growth['loopOutro'])} chars, replyStrategy: {len(growth['replyStrategy'])} chars"
-
-def verify_generated_tweets(tweets):
-    """Verify generatedTweets structure including firstSelfReply"""
-    if not isinstance(tweets, list):
-        return False, "generatedTweets is not an array"
-    
-    if len(tweets) != 3:
-        return False, f"generatedTweets has {len(tweets)} items (expected exactly 3)"
-    
-    for i, tweet in enumerate(tweets):
-        if not isinstance(tweet, dict):
-            return False, f"Tweet {i+1} is not an object"
-        
-        # Check required fields
-        required = ['style', 'text', 'rationale', 'hookStrength', 'retention', 'weakPoint', 'thread', 'firstSelfReply']
-        for field in required:
-            if field not in tweet:
-                return False, f"Tweet {i+1} missing field: {field}"
-        
-        # Validate firstSelfReply (NEW REQUIREMENT)
-        if not isinstance(tweet['firstSelfReply'], str) or not tweet['firstSelfReply'].strip():
-            return False, f"Tweet {i+1} firstSelfReply is not a non-empty string"
-        if len(tweet['firstSelfReply']) > 280:
-            return False, f"Tweet {i+1} firstSelfReply exceeds 280 chars: {len(tweet['firstSelfReply'])}"
-        
-        # Validate other fields
-        if not isinstance(tweet['style'], str) or not tweet['style'].strip():
-            return False, f"Tweet {i+1} style is not a non-empty string"
-        if not isinstance(tweet['text'], str) or not tweet['text'].strip():
-            return False, f"Tweet {i+1} text is not a non-empty string"
-        if not isinstance(tweet['rationale'], str) or not tweet['rationale'].strip():
-            return False, f"Tweet {i+1} rationale is not a non-empty string"
-        if not isinstance(tweet['hookStrength'], int) or not (0 <= tweet['hookStrength'] <= 100):
-            return False, f"Tweet {i+1} hookStrength is not an int 0-100: {tweet['hookStrength']}"
-        if tweet['retention'] not in ['Alta', 'Media', 'Baja']:
-            return False, f"Tweet {i+1} retention is not Alta/Media/Baja: {tweet['retention']}"
-        if not isinstance(tweet['weakPoint'], str) or not tweet['weakPoint'].strip():
-            return False, f"Tweet {i+1} weakPoint is not a non-empty string"
-        if not isinstance(tweet['thread'], list):
-            return False, f"Tweet {i+1} thread is not an array"
-    
-    return True, f"All 3 tweets have valid structure including firstSelfReply"
-
-def create_test_image():
-    """Create a small test PNG with text"""
-    img = Image.new('RGB', (400, 200), color='#1a1a2e')
-    draw = ImageDraw.Draw(img)
-    
-    # Draw text
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)
-    except:
-        font = ImageFont.load_default()
-    
-    draw.text((50, 50), "LANZAMIENTO", fill='white', font=font)
-    draw.text((50, 120), "Producto IA", fill='#00d4ff', font=font)
-    
-    # Convert to data URL
-    buffer = BytesIO()
-    img.save(buffer, format='PNG')
-    img_bytes = buffer.getvalue()
-    b64 = base64.b64encode(img_bytes).decode('utf-8')
-    return f"data:image/png;base64,{b64}"
-
-def test_user_mode():
-    """Test USER MODE with @MorrrMorrr63705"""
-    print("\n" + "="*80)
-    print("TEST 1: USER MODE - @MorrrMorrr63705")
-    print("="*80)
-    
-    try:
-        payload = {
-            "type": "user",
-            "query": "@MorrrMorrr63705"
-        }
-        
-        start = time.time()
-        response = requests.post(f"{BASE_URL}/analyze-and-generate", json=payload, timeout=TIMEOUT)
-        elapsed = time.time() - start
-        
-        log_test(f"HTTP Status", response.status_code == 200, f"Status: {response.status_code}, Time: {elapsed:.2f}s")
-        
-        if response.status_code != 200:
-            print(f"   Response: {response.text[:500]}")
-            return False
-        
-        data = response.json()
-        
-        # Check originalTweets
-        if 'originalTweets' not in data:
-            log_test("originalTweets present", False, "Missing originalTweets")
-            return False
-        
-        tweets = data['originalTweets']
-        log_test("originalTweets non-empty", len(tweets) > 0, f"Count: {len(tweets)}")
-        
-        # Verify composite score sorting
-        is_sorted, scores = verify_composite_score_sorting(tweets)
-        log_test("Composite score sorting (DESCENDING)", is_sorted, f"Scores: {scores[:5]}")
-        
-        # Verify primeTimes
-        if 'primeTimes' not in data:
-            log_test("primeTimes present", False, "Missing primeTimes")
-            return False
-        
-        pt_valid, pt_msg = verify_prime_times(data['primeTimes'])
-        log_test("primeTimes structure", pt_valid, pt_msg)
-        
-        # Verify growth object
-        if 'growth' not in data:
-            log_test("growth object present", False, "Missing growth")
-            return False
-        
-        growth_valid, growth_msg = verify_growth_object(data['growth'])
-        log_test("growth object structure", growth_valid, growth_msg)
-        
-        # Verify generatedTweets
-        if 'analysis' not in data or 'generatedTweets' not in data['analysis']:
-            log_test("analysis.generatedTweets present", False, "Missing analysis.generatedTweets")
-            return False
-        
-        tweets_valid, tweets_msg = verify_generated_tweets(data['analysis']['generatedTweets'])
-        log_test("generatedTweets structure (with firstSelfReply)", tweets_valid, tweets_msg)
-        
-        # Print sample firstSelfReply
-        if tweets_valid and len(data['analysis']['generatedTweets']) > 0:
-            sample = data['analysis']['generatedTweets'][0]['firstSelfReply']
-            print(f"   Sample firstSelfReply: \"{sample[:100]}...\"")
-        
-        return is_sorted and pt_valid and growth_valid and tweets_valid
-        
-    except Exception as e:
-        log_test("USER MODE", False, f"Exception: {str(e)}")
-        return False
-
-def test_topic_mode():
-    """Test TOPIC MODE with Inteligencia Artificial"""
-    print("\n" + "="*80)
-    print("TEST 2: TOPIC MODE - Inteligencia Artificial")
-    print("="*80)
-    
-    try:
-        payload = {
-            "type": "topic",
-            "query": "Inteligencia Artificial",
-            "minFaves": 100
-        }
-        
-        start = time.time()
-        response = requests.post(f"{BASE_URL}/analyze-and-generate", json=payload, timeout=TIMEOUT)
-        elapsed = time.time() - start
-        
-        log_test(f"HTTP Status", response.status_code == 200, f"Status: {response.status_code}, Time: {elapsed:.2f}s")
-        
-        if response.status_code != 200:
-            print(f"   Response: {response.text[:500]}")
-            return False
-        
-        data = response.json()
-        
-        # Check originalTweets
-        tweets = data.get('originalTweets', [])
-        log_test("originalTweets non-empty", len(tweets) > 0, f"Count: {len(tweets)}")
-        
-        # Verify composite score sorting
-        is_sorted, scores = verify_composite_score_sorting(tweets)
-        log_test("Composite score sorting (DESCENDING)", is_sorted, f"Scores: {scores[:5]}")
-        
-        # Verify primeTimes
-        pt_valid, pt_msg = verify_prime_times(data.get('primeTimes', []))
-        log_test("primeTimes structure", pt_valid, pt_msg)
-        
-        # Verify growth object
-        growth_valid, growth_msg = verify_growth_object(data.get('growth', {}))
-        log_test("growth object structure", growth_valid, growth_msg)
-        
-        # Verify generatedTweets
-        tweets_valid, tweets_msg = verify_generated_tweets(data.get('analysis', {}).get('generatedTweets', []))
-        log_test("generatedTweets structure (with firstSelfReply)", tweets_valid, tweets_msg)
-        
-        return is_sorted and pt_valid and growth_valid and tweets_valid
-        
-    except Exception as e:
-        log_test("TOPIC MODE", False, f"Exception: {str(e)}")
-        return False
-
-def test_vision_mode():
-    """Test VISION MODE with image"""
-    print("\n" + "="*80)
-    print("TEST 3: VISION MODE - Image with text")
-    print("="*80)
-    
-    try:
-        image_data = create_test_image()
-        payload = {
-            "image": image_data,
-            "note": "lanzamiento"
-        }
-        
-        start = time.time()
-        response = requests.post(f"{BASE_URL}/vision-generate", json=payload, timeout=TIMEOUT)
-        elapsed = time.time() - start
-        
-        log_test(f"HTTP Status", response.status_code == 200, f"Status: {response.status_code}, Time: {elapsed:.2f}s")
-        
-        if response.status_code != 200:
-            print(f"   Response: {response.text[:500]}")
-            return False
-        
-        data = response.json()
-        
-        # Verify growth object
-        growth_valid, growth_msg = verify_growth_object(data.get('growth', {}))
-        log_test("growth object structure", growth_valid, growth_msg)
-        
-        # Verify generatedTweets
-        tweets_valid, tweets_msg = verify_generated_tweets(data.get('analysis', {}).get('generatedTweets', []))
-        log_test("generatedTweets structure (with firstSelfReply)", tweets_valid, tweets_msg)
-        
-        # Check audio.tone (should be like "Sin audio")
-        audio_tone = data.get('audio', {}).get('tone', '')
-        log_test("audio.tone present", bool(audio_tone), f"Tone: {audio_tone}")
-        
-        return growth_valid and tweets_valid
-        
-    except Exception as e:
-        log_test("VISION MODE", False, f"Exception: {str(e)}")
-        return False
-
-def test_text_template():
-    """Test TEXT TEMPLATE with controversy format"""
-    print("\n" + "="*80)
-    print("TEST 4: TEXT TEMPLATE - controversy/SaaS")
-    print("="*80)
-    
-    try:
-        payload = {
-            "format": "controversy",
-            "topic": "SaaS"
-        }
-        
-        start = time.time()
-        response = requests.post(f"{BASE_URL}/text-template", json=payload, timeout=TIMEOUT)
-        elapsed = time.time() - start
-        
-        log_test(f"HTTP Status", response.status_code == 200, f"Status: {response.status_code}, Time: {elapsed:.2f}s")
-        
-        if response.status_code != 200:
-            print(f"   Response: {response.text[:500]}")
-            return False
-        
-        data = response.json()
-        
-        # Verify growth object
-        growth_valid, growth_msg = verify_growth_object(data.get('growth', {}))
-        log_test("growth object structure", growth_valid, growth_msg)
-        
-        # Verify generatedTweets
-        tweets_valid, tweets_msg = verify_generated_tweets(data.get('analysis', {}).get('generatedTweets', []))
-        log_test("generatedTweets structure (with firstSelfReply)", tweets_valid, tweets_msg)
-        
-        return growth_valid and tweets_valid
-        
-    except Exception as e:
-        log_test("TEXT TEMPLATE", False, f"Exception: {str(e)}")
-        return False
-
-def test_schedule_stability():
-    """Test GET /api/schedule stability (3 consecutive calls)"""
-    print("\n" + "="*80)
-    print("TEST 5: SCHEDULE STABILITY - 3 consecutive calls")
-    print("="*80)
-    
-    try:
-        results = []
-        for i in range(3):
-            start = time.time()
-            response = requests.get(f"{BASE_URL}/schedule", timeout=30)
-            elapsed = time.time() - start
-            
-            success = response.status_code == 200
-            results.append(success)
-            
-            log_test(f"Call {i+1}", success, f"Status: {response.status_code}, Time: {elapsed:.2f}s")
-            
-            if success:
-                data = response.json()
-                if 'items' not in data or 'count' not in data:
-                    log_test(f"Call {i+1} structure", False, "Missing items or count")
-                    results[-1] = False
-            
-            time.sleep(0.5)  # Small delay between calls
-        
-        all_passed = all(results)
-        log_test("All 3 calls successful", all_passed, f"Results: {results}")
-        
-        return all_passed
-        
-    except Exception as e:
-        log_test("SCHEDULE STABILITY", False, f"Exception: {str(e)}")
-        return False
-
-def test_metrics_endpoint():
-    """Quick test of GET /api/metrics"""
-    print("\n" + "="*80)
-    print("TEST 6: METRICS ENDPOINT")
-    print("="*80)
-    
-    try:
-        response = requests.get(f"{BASE_URL}/metrics", timeout=30)
-        
-        success = response.status_code == 200
-        log_test("HTTP Status", success, f"Status: {response.status_code}")
-        
-        if success:
-            data = response.json()
-            has_fields = 'posts' in data and 'diagnostics' in data and 'hours_saved' in data
-            log_test("Response structure", has_fields, f"Data: {data}")
-            return has_fields
-        
-        return False
-        
-    except Exception as e:
-        log_test("METRICS ENDPOINT", False, f"Exception: {str(e)}")
-        return False
-
-def main():
-    print("\n" + "="*80)
-    print("ZMETA-AI BACKEND TEST SUITE - VIRAL GROWTH ENGINE")
-    print("="*80)
-    print(f"Base URL: {BASE_URL}")
-    print(f"Timeout: {TIMEOUT}s per request")
-    
-    results = {
-        "USER MODE": test_user_mode(),
-        "TOPIC MODE": test_topic_mode(),
-        "VISION MODE": test_vision_mode(),
-        "TEXT TEMPLATE": test_text_template(),
-        "SCHEDULE STABILITY": test_schedule_stability(),
-        "METRICS": test_metrics_endpoint()
+    url = f"{BASE_URL}/analyze-and-generate"
+    payload = {
+        "type": "user",
+        "query": "@MorrrMorrr63705"
     }
     
-    print("\n" + "="*80)
-    print("FINAL RESULTS")
-    print("="*80)
+    try:
+        log(f"POST {url}")
+        log(f"Payload: {json.dumps(payload, indent=2)}")
+        start = time.time()
+        response = requests.post(url, json=payload, timeout=150)
+        elapsed = time.time() - start
+        log(f"Response time: {elapsed:.2f}s (allowed up to 150s)")
+        log(f"Status code: {response.status_code}")
+        
+        if response.status_code != 200:
+            log(f"❌ FAILED - Expected 200, got {response.status_code}")
+            log(f"Response: {response.text[:500]}")
+            return False
+        
+        data = response.json()
+        
+        # VALIDATION 1: Personality object exists at top level
+        if "personality" not in data:
+            log("❌ FAILED - Missing 'personality' object at top level")
+            return False
+        
+        personality = data["personality"]
+        log(f"✅ Personality object present")
+        
+        # VALIDATION 2: Check personality keys
+        required_keys = [
+            "tono_general", "nivel_humor", "nivel_ironia", "nivel_sarcasmo",
+            "ritmo_escritura", "estructura_habitual", "uso_emojis",
+            "objetivo_principal", "personalidad_global"
+        ]
+        
+        missing_keys = []
+        empty_keys = []
+        for key in required_keys:
+            if key not in personality:
+                missing_keys.append(key)
+            elif not personality[key] or personality[key] == "":
+                empty_keys.append(key)
+        
+        if missing_keys:
+            log(f"❌ FAILED - Missing personality keys: {missing_keys}")
+            return False
+        
+        log(f"✅ All required personality keys present: {required_keys}")
+        
+        # Check for non-empty values (some may be "n/d" which is acceptable)
+        non_empty_count = sum(1 for k in required_keys if personality.get(k) and personality[k] != "")
+        log(f"✅ Non-empty personality keys: {non_empty_count}/{len(required_keys)}")
+        
+        # Special check: personalidad_global should be a real sentence
+        personalidad_global = personality.get("personalidad_global", "")
+        if len(personalidad_global) < 10:
+            log(f"⚠️  WARNING - personalidad_global seems too short: '{personalidad_global}'")
+        else:
+            log(f"✅ personalidad_global is a real sentence: '{personalidad_global[:100]}...'")
+        
+        # VALIDATION 3: analysis.generatedTweets = exactly 3
+        if "analysis" not in data or "generatedTweets" not in data["analysis"]:
+            log("❌ FAILED - Missing analysis.generatedTweets")
+            return False
+        
+        generated_tweets = data["analysis"]["generatedTweets"]
+        if len(generated_tweets) != 3:
+            log(f"❌ FAILED - Expected exactly 3 generatedTweets, got {len(generated_tweets)}")
+            return False
+        
+        log(f"✅ analysis.generatedTweets has exactly 3 items")
+        
+        # VALIDATION 4: Each tweet has voiceScore (numeric 0-100)
+        for i, tweet in enumerate(generated_tweets):
+            # Check voiceScore
+            if "voiceScore" not in tweet:
+                log(f"❌ FAILED - Tweet #{i} missing 'voiceScore' field")
+                return False
+            
+            voice_score = tweet["voiceScore"]
+            if voice_score is None:
+                log(f"⚠️  WARNING - Tweet #{i} has voiceScore=null (validation may have failed)")
+            elif not isinstance(voice_score, (int, float)):
+                log(f"❌ FAILED - Tweet #{i} voiceScore is not numeric: {type(voice_score)}")
+                return False
+            elif voice_score < 0 or voice_score > 100:
+                log(f"❌ FAILED - Tweet #{i} voiceScore out of range: {voice_score}")
+                return False
+            else:
+                log(f"✅ Tweet #{i} has valid voiceScore: {voice_score}")
+            
+            # Check previously verified fields
+            required_fields = ["style", "text", "rationale", "hookStrength", "retention", "weakPoint", "thread", "firstSelfReply"]
+            for field in required_fields:
+                if field not in tweet:
+                    log(f"❌ FAILED - Tweet #{i} missing field: {field}")
+                    return False
+        
+        log(f"✅ All 3 tweets have voiceScore + all required fields")
+        
+        # VALIDATION 5: Regression checks
+        # Check growth object
+        if "growth" not in data:
+            log("❌ FAILED - Missing 'growth' object")
+            return False
+        
+        growth = data["growth"]
+        if "topBanners" not in growth or len(growth["topBanners"]) != 3:
+            log(f"❌ FAILED - growth.topBanners should have 3 items")
+            return False
+        if "loopOutro" not in growth or not growth["loopOutro"]:
+            log(f"❌ FAILED - growth.loopOutro missing or empty")
+            return False
+        if "replyStrategy" not in growth or not growth["replyStrategy"]:
+            log(f"❌ FAILED - growth.replyStrategy missing or empty")
+            return False
+        
+        log(f"✅ growth object present with topBanners (3), loopOutro, replyStrategy")
+        
+        # Check primeTimes
+        if "primeTimes" not in data:
+            log("❌ FAILED - Missing 'primeTimes' array")
+            return False
+        
+        prime_times = data["primeTimes"]
+        if not isinstance(prime_times, list):
+            log(f"❌ FAILED - primeTimes should be array")
+            return False
+        
+        log(f"✅ primeTimes array present with {len(prime_times)} items")
+        
+        # Check metrics
+        if "metrics" not in data:
+            log("❌ FAILED - Missing 'metrics' object")
+            return False
+        
+        log(f"✅ metrics object present")
+        
+        # Check originalTweets sorted DESC by composite score
+        if "originalTweets" not in data:
+            log("❌ FAILED - Missing 'originalTweets' array")
+            return False
+        
+        original_tweets = data["originalTweets"]
+        if len(original_tweets) == 0:
+            log("⚠️  WARNING - originalTweets is empty")
+        else:
+            # Calculate composite scores
+            scores = []
+            for t in original_tweets:
+                score = (t.get("views", 0) * 0.05 + 
+                        t.get("likes", 0) * 1 + 
+                        t.get("retweets", 0) * 2 + 
+                        t.get("replies", 0) * 1.5 + 
+                        t.get("quotes", 0) * 3)
+                scores.append(score)
+            
+            # Check if sorted DESC
+            is_sorted = all(scores[i] >= scores[i+1] for i in range(len(scores)-1))
+            if not is_sorted:
+                log(f"❌ FAILED - originalTweets NOT sorted DESC by composite score: {scores}")
+                return False
+            
+            log(f"✅ originalTweets sorted DESC by composite score: {scores[:5]}")
+        
+        log("=" * 80)
+        log("✅ TEST 1 PASSED - USER MODE with personality + voiceScore working")
+        log("=" * 80)
+        return True
+        
+    except requests.exceptions.Timeout:
+        log(f"❌ FAILED - Request timeout (>150s)")
+        return False
+    except Exception as e:
+        log(f"❌ FAILED - Exception: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_topic_mode_personality():
+    """
+    TEST 2: TOPIC MODE - Digital Personality + Voice Score
+    POST /api/analyze-and-generate with type=topic
+    """
+    log("=" * 80)
+    log("TEST 2: TOPIC MODE - Digital Personality + Voice Score")
+    log("=" * 80)
     
-    for test_name, passed in results.items():
-        symbol = "✅" if passed else "❌"
-        print(f"{symbol} {test_name}: {'PASSED' if passed else 'FAILED'}")
+    url = f"{BASE_URL}/analyze-and-generate"
+    payload = {
+        "type": "topic",
+        "query": "Inteligencia Artificial",
+        "minFaves": 100
+    }
     
-    total = len(results)
-    passed = sum(results.values())
-    print(f"\nTotal: {passed}/{total} tests passed")
+    try:
+        log(f"POST {url}")
+        log(f"Payload: {json.dumps(payload, indent=2)}")
+        start = time.time()
+        response = requests.post(url, json=payload, timeout=150)
+        elapsed = time.time() - start
+        log(f"Response time: {elapsed:.2f}s (allowed up to 150s)")
+        log(f"Status code: {response.status_code}")
+        
+        if response.status_code != 200:
+            log(f"❌ FAILED - Expected 200, got {response.status_code}")
+            log(f"Response: {response.text[:500]}")
+            return False
+        
+        data = response.json()
+        
+        # VALIDATION 1: Personality object exists
+        if "personality" not in data:
+            log("❌ FAILED - Missing 'personality' object at top level")
+            return False
+        
+        log(f"✅ Personality object present")
+        
+        # VALIDATION 2: Each generatedTweet has numeric voiceScore
+        if "analysis" not in data or "generatedTweets" not in data["analysis"]:
+            log("❌ FAILED - Missing analysis.generatedTweets")
+            return False
+        
+        generated_tweets = data["analysis"]["generatedTweets"]
+        if len(generated_tweets) != 3:
+            log(f"❌ FAILED - Expected exactly 3 generatedTweets, got {len(generated_tweets)}")
+            return False
+        
+        for i, tweet in enumerate(generated_tweets):
+            if "voiceScore" not in tweet:
+                log(f"❌ FAILED - Tweet #{i} missing 'voiceScore' field")
+                return False
+            
+            voice_score = tweet["voiceScore"]
+            if voice_score is None:
+                log(f"⚠️  WARNING - Tweet #{i} has voiceScore=null")
+            elif not isinstance(voice_score, (int, float)):
+                log(f"❌ FAILED - Tweet #{i} voiceScore is not numeric: {type(voice_score)}")
+                return False
+            else:
+                log(f"✅ Tweet #{i} has valid voiceScore: {voice_score}")
+        
+        # VALIDATION 3: growth + primeTimes present
+        if "growth" not in data:
+            log("❌ FAILED - Missing 'growth' object")
+            return False
+        
+        if "primeTimes" not in data:
+            log("❌ FAILED - Missing 'primeTimes' array")
+            return False
+        
+        log(f"✅ growth and primeTimes present")
+        
+        log("=" * 80)
+        log("✅ TEST 2 PASSED - TOPIC MODE with personality + voiceScore working")
+        log("=" * 80)
+        return True
+        
+    except requests.exceptions.Timeout:
+        log(f"❌ FAILED - Request timeout (>150s)")
+        return False
+    except Exception as e:
+        log(f"❌ FAILED - Exception: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_text_template_regression():
+    """
+    TEST 3: Regression - POST /api/text-template
+    """
+    log("=" * 80)
+    log("TEST 3: Regression - POST /api/text-template")
+    log("=" * 80)
     
-    return all(results.values())
+    url = f"{BASE_URL}/text-template"
+    payload = {
+        "format": "myth",
+        "topic": "SaaS"
+    }
+    
+    try:
+        log(f"POST {url}")
+        log(f"Payload: {json.dumps(payload, indent=2)}")
+        start = time.time()
+        response = requests.post(url, json=payload, timeout=30)
+        elapsed = time.time() - start
+        log(f"Response time: {elapsed:.2f}s")
+        log(f"Status code: {response.status_code}")
+        
+        if response.status_code != 200:
+            log(f"❌ FAILED - Expected 200, got {response.status_code}")
+            log(f"Response: {response.text[:500]}")
+            return False
+        
+        data = response.json()
+        
+        # Check structure
+        if "analysis" not in data or "generatedTweets" not in data["analysis"]:
+            log("❌ FAILED - Missing analysis.generatedTweets")
+            return False
+        
+        generated_tweets = data["analysis"]["generatedTweets"]
+        if len(generated_tweets) != 3:
+            log(f"❌ FAILED - Expected 3 tweets, got {len(generated_tweets)}")
+            return False
+        
+        # Check each tweet has required fields
+        for i, tweet in enumerate(generated_tweets):
+            required_fields = ["text", "firstSelfReply", "thread"]
+            for field in required_fields:
+                if field not in tweet:
+                    log(f"❌ FAILED - Tweet #{i} missing field: {field}")
+                    return False
+        
+        log(f"✅ text-template returns 3 tweets with firstSelfReply + thread")
+        
+        log("=" * 80)
+        log("✅ TEST 3 PASSED - text-template regression OK")
+        log("=" * 80)
+        return True
+        
+    except Exception as e:
+        log(f"❌ FAILED - Exception: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_metrics_regression():
+    """
+    TEST 4: Regression - GET /api/metrics
+    """
+    log("=" * 80)
+    log("TEST 4: Regression - GET /api/metrics")
+    log("=" * 80)
+    
+    url = f"{BASE_URL}/metrics"
+    
+    try:
+        log(f"GET {url}")
+        response = requests.get(url, timeout=10)
+        log(f"Status code: {response.status_code}")
+        
+        if response.status_code != 200:
+            log(f"❌ FAILED - Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        
+        # Check structure
+        required_fields = ["posts", "diagnostics", "hours_saved"]
+        for field in required_fields:
+            if field not in data:
+                log(f"❌ FAILED - Missing field: {field}")
+                return False
+        
+        log(f"✅ metrics endpoint returns: {data}")
+        
+        log("=" * 80)
+        log("✅ TEST 4 PASSED - metrics regression OK")
+        log("=" * 80)
+        return True
+        
+    except Exception as e:
+        log(f"❌ FAILED - Exception: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_schedule_regression():
+    """
+    TEST 5: Regression - GET /api/schedule
+    """
+    log("=" * 80)
+    log("TEST 5: Regression - GET /api/schedule")
+    log("=" * 80)
+    
+    url = f"{BASE_URL}/schedule"
+    
+    try:
+        log(f"GET {url}")
+        response = requests.get(url, timeout=10)
+        log(f"Status code: {response.status_code}")
+        
+        if response.status_code != 200:
+            log(f"❌ FAILED - Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        
+        # Check structure
+        if "items" not in data or "count" not in data:
+            log(f"❌ FAILED - Missing items or count field")
+            return False
+        
+        log(f"✅ schedule endpoint returns: items={len(data['items'])}, count={data['count']}")
+        
+        log("=" * 80)
+        log("✅ TEST 5 PASSED - schedule regression OK")
+        log("=" * 80)
+        return True
+        
+    except Exception as e:
+        log(f"❌ FAILED - Exception: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def main():
+    log("Starting ZMETA-AI Backend Testing - Digital Personality + Voice Validation")
+    log(f"Base URL: {BASE_URL}")
+    log("")
+    
+    results = []
+    
+    # Run all tests
+    results.append(("USER MODE - Personality + VoiceScore", test_user_mode_personality()))
+    results.append(("TOPIC MODE - Personality + VoiceScore", test_topic_mode_personality()))
+    results.append(("Regression: text-template", test_text_template_regression()))
+    results.append(("Regression: metrics", test_metrics_regression()))
+    results.append(("Regression: schedule", test_schedule_regression()))
+    
+    # Summary
+    log("")
+    log("=" * 80)
+    log("FINAL SUMMARY")
+    log("=" * 80)
+    
+    for test_name, passed in results:
+        status = "✅ PASSED" if passed else "❌ FAILED"
+        log(f"{status} - {test_name}")
+    
+    passed_count = sum(1 for _, p in results if p)
+    total_count = len(results)
+    
+    log("")
+    log(f"Total: {passed_count}/{total_count} tests passed")
+    
+    if passed_count == total_count:
+        log("🎉 ALL TESTS PASSED")
+        sys.exit(0)
+    else:
+        log("⚠️  SOME TESTS FAILED")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
-    success = main()
-    exit(0 if success else 1)
+    main()

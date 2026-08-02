@@ -74,6 +74,19 @@ async function bumpMetrics(database, posts = 0, diagnostics = 0) {
 }
 
 // ----------------------------- Helpers -----------------------------
+function extractTweetMedia(t) {
+  const out = []
+  const cands = t?.extendedEntities?.media || t?.entities?.media || t?.media || t?.extended_entities?.media || []
+  for (const m of cands || []) {
+    const type = m?.type || (m?.video_info ? 'video' : 'photo')
+    const url = m?.media_url_https || m?.media_url || m?.thumbnail_url || m?.preview_image_url || m?.url
+    if (url) out.push({ type, url })
+  }
+  // algunos formatos exponen mediaUrls / photoUrls planos
+  for (const u of t?.mediaUrls || t?.photoUrls || []) { if (typeof u === 'string') out.push({ type: 'photo', url: u }) }
+  return out
+}
+
 function normalizeTweet(t, fallbackAuthor = null) {
   const author = t?.author || fallbackAuthor || {}
   return {
@@ -88,6 +101,7 @@ function normalizeTweet(t, fallbackAuthor = null) {
     bookmarks: t?.bookmarkCount ?? 0,
     createdAt: t?.createdAt || '',
     lang: t?.lang || '',
+    media: extractTweetMedia(t),
     author: {
       name: author?.name || '',
       userName: author?.userName || '',
@@ -174,23 +188,29 @@ async function callGemini(prompt, temperature = 0.85) {
   return rawGeminiJSON([{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt }], temperature)
 }
 
-function buildPrompt(mode, query, tweets) {
+function buildPrompt(mode, query, tweets, personality = null) {
   const context = tweets
-    .map((t, i) => `#${i + 1} [❤️ ${t.likes} | 🔁 ${t.retweets} | 💬 ${t.replies} | 👁️ ${t.views}]\n"${t.text}"`)
+    .map((t, i) => {
+      const media = (t.media || []).length ? ` [multimedia: ${(t.media || []).map((m) => m.type).join(', ')}]` : ''
+      return `#${i + 1} [❤️ ${t.likes} | 🔁 ${t.retweets} | 💬 ${t.replies} | 👁️ ${t.views}]${media}\n"${t.text}"`
+    })
     .join('\n\n')
   const focus =
     mode === 'user'
       ? `los tweets recientes del perfil "${query}"`
       : `los tweets virales de alto engagement sobre la temática "${query}"`
+  const voiceBlock = personality
+    ? `\n\nPERSONALIDAD DIGITAL DEL AUTOR (PRIORIDAD ABSOLUTA — ESCRIBE COMO SI FUERAS ESTE AUTOR, replicando vocabulario, longitud, ritmo, humor, ironía, forma de empezar/cerrar, estructura, emojis, hashtags, pausas, preguntas y estilo argumentativo):\n${JSON.stringify(personality)}\n\nNo copies literalmente los tweets modelo: reproduce la VOZ e identidad comunicativa del autor.`
+    : ''
   return `Eres un experto en marketing viral y copywriting para X (Twitter). A continuación te doy ${focus} que han funcionado bien:
 
-${context}
+${context}${voiceBlock}
 
 TU TAREA (2 fases):
 
 FASE 1 - ANÁLISIS DE PATRONES: Identifica POR QUÉ funcionaron estos tweets. Analiza la estructura del gancho, la longitud óptima, el tono, el formato y los elementos emocionales/psicológicos.
 
-FASE 2 - INGENIERÍA INVERSA VIRAL: Genera EXACTAMENTE 3 propuestas de tweets nuevos, originales y optimizados, aplicando los patrones ganadores. Cada uno en un estilo diferente:
+FASE 2 - INGENIERÍA INVERSA VIRAL: Genera EXACTAMENTE 3 propuestas de tweets nuevos, originales y optimizados, aplicando los patrones ganadores${personality ? ' Y manteniendo ESTRICTAMENTE la VOZ del autor descrita arriba' : ''}. Cada uno en un estilo diferente:
   1. Un Tweet Educativo / Lista
   2. Un Tweet Provocativo / Opinión
   3. Un Tweet Directo / Gancho corto
@@ -215,6 +235,51 @@ Responde ÚNICAMENTE con un objeto JSON válido con esta estructura EXACTA (en e
 }
 
 Los tweets deben estar en español, ser auténticos, sin hashtags excesivos, listos para copiar y pegar.`
+}
+
+// ---- MEJORA 1/3: Motor de Personalidad Digital (multimodal) ----
+const PERSONALITY_SCHEMA = `{
+  "tono_general":"", "nivel_humor":"", "nivel_ironia":"", "nivel_sarcasmo":"", "nivel_critica":"",
+  "nivel_emocional":"", "tipo_argumentacion":"", "ritmo_escritura":"", "estructura_habitual":"",
+  "vocabulario_recurrente":"", "expresiones_favoritas":"", "uso_hashtags":"", "uso_emojis":"",
+  "call_to_action":"", "objetivo_principal":"", "tipo_contenido":"", "valores_recurrentes":"",
+  "emociones_predominantes":"", "estilo_visual":"", "estilo_multimedia":"", "consistencia_editorial":"",
+  "nivel_polarizacion":"", "personalidad_global":""
+}`
+
+function buildPersonalityPrompt(mode, query, tweets) {
+  const context = tweets
+    .map((t, i) => {
+      const media = (t.media || []).length ? ` [adjunta: ${(t.media || []).map((m) => m.type).join(', ')}]` : ''
+      return `#${i + 1}${media} "${t.text}"`
+    })
+    .join('\n')
+  const who = mode === 'user' ? `del autor de la cuenta ${query}` : `del arquetipo de creador que domina la temática "${query}"`
+  return `Analiza EXCLUSIVAMENTE el contenido publicado ${who}: los tweets siguientes y las imágenes/miniaturas adjuntas (si las hay). NO uses biografía, NO uses información externa, NO inventes rasgos. Si un rasgo no puede inferirse del contenido, escribe "n/d".
+
+CONTENIDO PUBLICADO:
+${context}
+
+Construye la PERSONALIDAD DIGITAL como un objeto JSON EXACTO con estas claves (valores breves en español; usa niveles "alto/medio/bajo" donde tenga sentido):
+${PERSONALITY_SCHEMA}
+
+Responde ÚNICAMENTE con ese JSON.`
+}
+
+async function computePersonality(mode, query, tweets) {
+  const imgs = []
+  for (const t of tweets) { for (const m of t.media || []) { if (m.url && imgs.length < 4) imgs.push(m.url) } }
+  const content = [{ type: 'text', text: buildPersonalityPrompt(mode, query, tweets) }]
+  for (const u of imgs) content.push({ type: 'image_url', image_url: { url: u } })
+  try { return await rawGeminiJSON([{ role: 'system', content: SYSTEM }, { role: 'user', content }], 0.4) } catch (e) { return null }
+}
+
+// ---- MEJORA 9: Validación automática de fidelidad de voz ----
+async function validateVoice(personality, tweets) {
+  if (!personality || !tweets?.length) return []
+  const list = tweets.map((t, i) => `#${i}: "${t.text}"`).join('\n')
+  const prompt = `Dada esta PERSONALIDAD DIGITAL del autor:\n${JSON.stringify(personality)}\n\nEvalúa si CADA tweet suena EXACTAMENTE como ese autor (tono, vocabulario, estructura, humor, ironía, ritmo, forma de empezar/cerrar).\n\nTWEETS:\n${list}\n\nResponde ÚNICAMENTE con JSON: { "scores": [ { "index": 0, "voiceScore": 0, "issue": "1 frase de mejora si <90, o 'OK'" } ] }`
+  try { const r = await rawGeminiJSON([{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt }], 0.2); return r?.scores || [] } catch (e) { return [] }
 }
 
 function buildVisionPrompt(note, transcript) {
@@ -410,11 +475,34 @@ async function handleRoute(request, { params }) {
         )
       }
 
-      const analysis = await callGemini(buildPrompt(type, query, originalTweets))
+      // MEJORA 1: construir la personalidad digital ANTES de generar
+      const personality = await computePersonality(type, query, originalTweets)
+
+      // MEJORA 2/8: generar en la voz del autor
+      let analysis = await callGemini(buildPrompt(type, query, originalTweets, personality))
+
+      // MEJORA 9: validación de fidelidad de voz + regeneración si <90
+      let voiceScores = await validateVoice(personality, analysis?.generatedTweets || [])
+      const minScore = voiceScores.length ? Math.min(...voiceScores.map((s) => s.voiceScore || 0)) : 100
+      if (personality && minScore < 90) {
+        const fb = voiceScores.filter((s) => (s.voiceScore || 0) < 90).map((s) => `#${s.index}: ${s.issue}`).join(' | ')
+        const retryPrompt = buildPrompt(type, query, originalTweets, personality) +
+          `\n\nCORRECCIÓN OBLIGATORIA: la versión previa NO sonaba suficientemente al autor (${fb}). Reescribe los 3 tweets elevando la fidelidad de voz por encima de 90/100, sin perder el potencial viral.`
+        const retry = await callGemini(retryPrompt)
+        if (retry?.generatedTweets?.length) {
+          analysis = retry
+          voiceScores = await validateVoice(personality, analysis.generatedTweets)
+        }
+      }
+      // adjuntar voiceScore a cada tweet
+      if (analysis?.generatedTweets) {
+        analysis.generatedTweets = analysis.generatedTweets.map((t, i) => ({ ...t, voiceScore: voiceScores.find((s) => s.index === i)?.voiceScore ?? null }))
+      }
+
       const metrics = await bumpMetrics(database, 3, 1)
       const primeTimes = computePrimeTimes(originalTweets)
 
-      const result = { id: uuidv4(), mode: type, query, minFaves: type === 'topic' ? minFaves : null, userInfo, originalTweets, analysis, growth: analysis?.growth || null, primeTimes, metrics, createdAt: new Date() }
+      const result = { id: uuidv4(), mode: type, query, minFaves: type === 'topic' ? minFaves : null, userInfo, personality, originalTweets, analysis, growth: analysis?.growth || null, primeTimes, metrics, createdAt: new Date() }
       await database.collection('analyses').insertOne({ ...result })
       const { _id, ...clean } = result
       return handleCORS(NextResponse.json(clean))

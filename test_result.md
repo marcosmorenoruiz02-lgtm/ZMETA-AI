@@ -439,6 +439,67 @@ backend:
         -agent: "testing"
         -comment: "✅ PASSED - Proxy endpoint working correctly. TEST 1: Missing url parameter returns HTTP 400 with error \"url requerido\". TEST 2: Valid URL (https://httpbin.org/image/png) returns HTTP 200 with Content-Disposition: attachment; filename=\"viralforge-reel.mp4\" header. Content-Type header present. TEST 3: Unreachable Instagram CDN URL returns HTTP 502 (expected behavior). All proxy functionality working as designed."
 
+
+  - task: "ZMETA-AI UPGRADE - Digital Personality Extraction (computePersonality)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "PERSONALITY_SCHEMA (lines 241-248) defines 24 personality keys. computePersonality function (lines 269-275) uses Gemini multimodal (text + up to 4 tweet images) to extract personality from tweets. Called at line 479 BEFORE generating tweets. Returns personality object with keys: tono_general, nivel_humor, nivel_ironia, nivel_sarcasmo, nivel_critica, nivel_emocional, tipo_argumentacion, ritmo_escritura, estructura_habitual, vocabulario_recurrente, expresiones_favoritas, uso_hashtags, uso_emojis, call_to_action, objetivo_principal, tipo_contenido, valores_recurrentes, emociones_predominantes, estilo_visual, estilo_multimedia, consistencia_editorial, nivel_polarizacion, personalidad_global."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - USER MODE (@MorrrMorrr63705): HTTP 200 in 48.28s. Personality object present at top level with ALL 9 required keys (tono_general, nivel_humor, nivel_ironia, nivel_sarcasmo, ritmo_escritura, estructura_habitual, uso_emojis, objetivo_principal, personalidad_global). All keys have non-empty values (9/9). personalidad_global is a real sentence: 'Denunciante, alarmista, crítico político con una agenda clara de oposición...'. TOPIC MODE (Inteligencia Artificial, minFaves=100): HTTP 200 in 58.40s. Personality object present. Personality extraction working correctly in both USER and TOPIC modes."
+
+  - task: "ZMETA-AI UPGRADE - Voice Validation + voiceScore (validateVoice)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "validateVoice function (lines 278-283) evaluates each generated tweet against personality. Returns array of {index, voiceScore (0-100), issue}. At lines 485-496: validates voice scores, if any score < 90, regenerates tweets once with feedback. At lines 498-500: attaches voiceScore to each generatedTweet. This creates a multi-Gemini-call flow: personality extraction + generation + validation + optional 1 regeneration (up to 4 Gemini calls total). Timeout increased to 150s."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - USER MODE: All 3 generatedTweets have numeric voiceScore field (98, 99, 97). All scores in valid 0-100 range. TOPIC MODE: All 3 tweets have numeric voiceScore (95, 98, 99). Voice validation working correctly. Each tweet also has all previously verified fields (style, text, rationale, hookStrength, retention, weakPoint, thread, firstSelfReply). The multi-Gemini-call flow (personality + generation + validation + optional regeneration) completed within 150s timeout in both modes (48.28s USER, 58.40s TOPIC)."
+
+  - task: "ZMETA-AI UPGRADE - Author-Voice Generation (buildPrompt with personality)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "buildPrompt function (lines 191-238) now accepts optional personality parameter. If personality exists, adds voiceBlock (lines 202-204) to prompt: 'PERSONALIDAD DIGITAL DEL AUTOR (PRIORIDAD ABSOLUTA — ESCRIBE COMO SI FUERAS ESTE AUTOR, replicando vocabulario, longitud, ritmo, humor, ironía, forma de empezar/cerrar, estructura, emojis, hashtags, pausas, preguntas y estilo argumentativo)'. This instructs Gemini to generate tweets in the author's voice. At line 482: callGemini with personality context."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Verified via voiceScore results. USER MODE: voiceScores of 98, 99, 97 indicate high fidelity to author voice. TOPIC MODE: voiceScores of 95, 98, 99 indicate high fidelity. The personality-driven generation is working correctly, producing tweets that match the extracted personality profile. No regeneration was triggered (all scores >= 90), indicating first-pass generation quality is high."
+
+  - task: "ZMETA-AI UPGRADE - Regression Testing (no breaking changes)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Verified that personality + voiceScore additions do not break existing functionality: growth object (topBanners, loopOutro, replyStrategy), primeTimes array, metrics, originalTweets sorting (composite score DESC), text-template endpoint, schedule endpoint."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - All regression tests passed. USER MODE: growth object present (topBanners: 3, loopOutro, replyStrategy), primeTimes array (3 items), metrics object, originalTweets sorted DESC by composite score [14.6, 12.6, 10.2, 9.6, 9.5]. TOPIC MODE: growth and primeTimes present. POST /api/text-template (format=myth, topic=SaaS): HTTP 200 in 26.90s, 3 tweets with firstSelfReply + thread. GET /api/metrics: HTTP 200, returns posts/diagnostics/hours_saved. GET /api/schedule: HTTP 200, returns items array and count. No breaking changes detected. All existing features working correctly alongside new personality + voiceScore features."
+
 frontend:
   - task: "UI premium dark mode con tabs Usuario/Tematica, grid de resultados y boton copiar"
     implemented: true
@@ -460,6 +521,9 @@ metadata:
   version: "1.0"
   test_sequence: 1
   run_ui: false
+
+    -agent: "testing"
+    -message: "ZMETA-AI UPGRADE TESTING COMPLETED ✅ - Digital Personality + Voice Validation fully operational. All 5 tests PASSED (5/5). NEW FEATURES VERIFIED: (1) PERSONALITY EXTRACTION: USER MODE returns personality object with ALL 9 required keys (tono_general, nivel_humor, nivel_ironia, nivel_sarcasmo, ritmo_escritura, estructura_habitual, uso_emojis, objetivo_principal, personalidad_global). personalidad_global is real sentence: 'Denunciante, alarmista, crítico político con una agenda clara de oposición...'. TOPIC MODE also returns personality object. (2) VOICE SCORE: USER MODE - all 3 tweets have numeric voiceScore (98, 99, 97). TOPIC MODE - all 3 tweets have numeric voiceScore (95, 98, 99). All scores in valid 0-100 range. (3) MULTI-GEMINI FLOW: Personality extraction + generation + validation + optional regeneration completed within 150s timeout (USER: 48.28s, TOPIC: 58.40s). (4) REGRESSION: growth object, primeTimes, metrics, originalTweets sorting (DESC by composite score [14.6, 12.6, 10.2, 9.6, 9.5]), text-template (HTTP 200 in 26.90s), metrics endpoint, schedule endpoint - ALL working correctly. No breaking changes. Backend fully operational with upgraded analysis engine. Ready for main agent to summarize and finish."
 
 test_plan:
   current_focus: []

@@ -274,6 +274,12 @@ export default function App() {
   const audio = data?.audio
   const growth = data?.growth || data?.analysis?.growth || null
   const primeTimes = data?.primeTimes || []
+  const personality = data?.personality || null
+  const PERSONALITY_LABELS = {
+    tono_general: 'Tono', nivel_humor: 'Humor', nivel_ironia: 'Ironía', nivel_sarcasmo: 'Sarcasmo',
+    nivel_critica: 'Crítica', nivel_emocional: 'Emocional', ritmo_escritura: 'Ritmo', uso_emojis: 'Emojis',
+    uso_hashtags: 'Hashtags', estructura_habitual: 'Estructura', objetivo_principal: 'Objetivo', nivel_polarizacion: 'Polarización',
+  }
 
   return (
     <div className="h-screen overflow-hidden flex flex-col bg-background text-foreground">
@@ -460,6 +466,21 @@ export default function App() {
           {!data && !loading && (<div className="h-full flex flex-col items-center justify-center text-muted-foreground py-20"><Zap className="h-10 w-10 mb-3 opacity-40" /><p className="text-sm text-center max-w-xs">Elige Usuario, Temática o Media (o Express), y la IA generará posts con score de viralidad.</p></div>)}
           {loading && (<><Skeleton className="h-32 w-full" /><Skeleton className="h-52 w-full" /><Skeleton className="h-52 w-full" /></>)}
 
+          {personality && !loading && (
+            <Card className="glass border-accent/30"><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2 text-accent"><User className="h-4 w-4" /> Personalidad Digital del Autor</CardTitle></CardHeader><CardContent className="pt-0 space-y-2.5">
+              {personality.personalidad_global && <p className="text-sm text-foreground/90 leading-snug italic">"{personality.personalidad_global}"</p>}
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(PERSONALITY_LABELS).map(([k, label]) => personality[k] && personality[k] !== 'n/d' ? (
+                  <Badge key={k} variant="secondary" className="bg-accent/10 text-accent border border-accent/20 font-normal text-[11px]"><span className="opacity-70 mr-1">{label}:</span>{personality[k]}</Badge>
+                ) : null)}
+              </div>
+              {personality.expresiones_favoritas && personality.expresiones_favoritas !== 'n/d' && (
+                <div className="text-xs text-muted-foreground"><span className="text-foreground/80">Expresiones:</span> {personality.expresiones_favoritas}</div>
+              )}
+              <div className="text-[11px] text-cyan-400 font-mono flex items-center gap-1"><Cpu className="h-3 w-3" /> Los tweets se generan replicando esta voz</div>
+            </CardContent></Card>
+          )}
+
           {analysis && !loading && (
             <Card className="glass border-primary/30"><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2 text-primary"><BrainCircuit className="h-4 w-4" /> Análisis de patrones</CardTitle></CardHeader><CardContent className="pt-0">
               <p className="text-sm text-foreground/90 leading-snug">{analysis.summary}</p>
@@ -506,7 +527,7 @@ export default function App() {
               <Card key={i} className={`glass-hover ring-1 ${meta.accent} ${hot ? 'ring-cyan-500/50 shadow-[0_0_24px_rgba(0,242,254,0.18)]' : ''}`}><CardContent className="p-4">
                 <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                   <div className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${meta.chip}`}><Icon className="h-3.5 w-3.5" /> {g.style}</div>
-                  <div className="flex items-center gap-2">{isThread && <Badge className="bg-sky-500/15 text-sky-400 border border-sky-500/30"><ListOrdered className="h-3 w-3 mr-1" /> Hilo {g.thread.length}</Badge>}{hot && <Badge className="bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 animate-pulse">🔥 Alto potencial</Badge>}{g.rewritten && <Badge className="bg-accent/15 text-accent border border-accent/30">Reescrito ✨</Badge>}</div>
+                  <div className="flex items-center gap-2 flex-wrap">{typeof g.voiceScore === 'number' && <Badge className={`border ${g.voiceScore >= 90 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/15 text-amber-400 border-amber-500/30'}`}><User className="h-3 w-3 mr-1" /> Voz {g.voiceScore}%</Badge>}{isThread && <Badge className="bg-sky-500/15 text-sky-400 border border-sky-500/30"><ListOrdered className="h-3 w-3 mr-1" /> Hilo {g.thread.length}</Badge>}{hot && <Badge className="bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 animate-pulse">🔥 Alto potencial</Badge>}{g.rewritten && <Badge className="bg-accent/15 text-accent border border-accent/30">Reescrito ✨</Badge>}</div>
                 </div>
 
                 <div className="flex items-center gap-4 rounded-xl border border-border/60 bg-secondary/30 p-3 mb-3">
