@@ -8,6 +8,7 @@ const nextConfig = {
   },
   // Renamed from experimental.serverComponentsExternalPackages in Next 15
   serverExternalPackages: ['mongodb'],
+  transpilePackages: ['three', '@react-three/fiber', '@react-three/drei', 'three-stdlib'],
   webpack(config, { dev }) {
     if (dev) {
       // Reduce CPU/memory from file watching
