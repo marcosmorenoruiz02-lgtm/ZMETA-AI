@@ -23,7 +23,7 @@ import {
   AlertTriangle, Wand2, Loader2, Trophy, Radar, Sun, Moon, ImageIcon,
   ScanText, Smile, CalendarClock, Layers, Rocket, MessageSquareQuote, Lightbulb,
   History, Star, Download, RotateCcw, Activity, Cpu, Music, ListOrdered, Instagram,
-  PenLine, Link2, CornerDownRight, Bookmark, Boxes,
+  PenLine, Link2, CornerDownRight, Bookmark, Boxes, Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -149,12 +149,16 @@ export default function App() {
   const [historySearch, setHistorySearch] = useState('')
   // FASE 1-4: Motor de Redacción "Bookmark-Bait"
   const [composeText, setComposeText] = useState('')
-  const [cluster, setCluster] = useState('tech_ai')
+  const [cluster, setCluster] = useState('Tech & IA')
   const [composeReply, setComposeReply] = useState('')
   const [bmScore, setBmScore] = useState(null)
   const [bmLoading, setBmLoading] = useState(false)
   const [bmFixing, setBmFixing] = useState(null)
   const [composeScheduling, setComposeScheduling] = useState(false)
+  // Panel de publicaciones programadas
+  const [scheduleOpen, setScheduleOpen] = useState(false)
+  const [scheduledItems, setScheduledItems] = useState([])
+  const [loadingSchedule, setLoadingSchedule] = useState(false)
   const alertShownRef = useRef(false)
 
   useEffect(() => {
@@ -326,6 +330,26 @@ export default function App() {
     } catch (e) { toast.error('Error al programar') } finally { setComposeScheduling(false) }
   }
 
+  // Publicaciones programadas: cargar y eliminar
+  const loadSchedule = async () => {
+    setLoadingSchedule(true)
+    try {
+      const res = await fetch('/api/schedule')
+      const json = await res.json()
+      if (res.ok) { setScheduledItems(json.items || []); setScheduledCount(json.count || 0) }
+    } catch (e) {} finally { setLoadingSchedule(false) }
+  }
+  const openSchedule = (open) => { setScheduleOpen(open); if (open) loadSchedule() }
+  const deleteScheduled = async (id) => {
+    try {
+      const res = await fetch(`/api/schedule?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+      const json = await res.json()
+      if (res.ok) { setScheduledItems((prev) => prev.filter((x) => x.id !== id)); setScheduledCount(json.count || 0); toast.success('Programado eliminado') }
+      else toast.error('No se pudo eliminar')
+    } catch (e) { toast.error('No se pudo eliminar') }
+  }
+  useEffect(() => { loadSchedule() }, [])
+
 
   // History drawer actions
   const reloadRun = (item) => { setHistoryOpen(false); applyResult(item.result, null, true) }
@@ -382,7 +406,31 @@ export default function App() {
         </div>
         <div className="flex items-center gap-2">
           <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-border/60 px-2.5 py-1"><Clock className="h-3.5 w-3.5 text-cyan-400" /><span className="text-xs font-semibold text-cyan-400">{metrics.hours_saved}h</span></div>
-          <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-border/60 px-2.5 py-1"><CalendarClock className="h-3.5 w-3.5 text-primary" /><span className="text-xs font-semibold text-primary">{scheduledCount}</span></div>
+          <Sheet open={scheduleOpen} onOpenChange={openSchedule}>
+            <SheetTrigger asChild>
+              <button className="flex items-center gap-1.5 rounded-lg border border-border/60 px-2.5 py-1 hover:border-primary/50 transition-colors" title="Publicaciones programadas"><CalendarClock className="h-3.5 w-3.5 text-primary" /><span className="text-xs font-semibold text-primary">{scheduledCount}</span></button>
+            </SheetTrigger>
+            <SheetContent side="right" className="glass border-border/60 w-full sm:max-w-md flex flex-col">
+              <SheetHeader><SheetTitle className="flex items-center gap-2"><CalendarClock className="h-5 w-5 text-primary" /> Publicaciones Programadas</SheetTitle><SheetDescription>Tus borradores en cola. Cópialos para publicar o elimínalos.</SheetDescription></SheetHeader>
+              <div className="mt-4 flex-1 overflow-y-auto space-y-2 pr-1">
+                {loadingSchedule && <p className="text-sm text-muted-foreground text-center py-8"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Cargando...</p>}
+                {!loadingSchedule && scheduledItems.length === 0 && <p className="text-sm text-muted-foreground text-center py-8">No tienes publicaciones programadas todavía.</p>}
+                {scheduledItems.map((s) => (
+                  <div key={s.id} className="glass rounded-xl p-3">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"><CalendarClock className="h-3.5 w-3.5 text-primary" /> {new Date(s.scheduledAt).toLocaleString('es')}</span>
+                      {s.style ? <Badge variant="secondary" className="text-[10px] shrink-0">{s.style}</Badge> : null}
+                    </div>
+                    <p className="text-sm text-foreground/90 whitespace-pre-wrap break-words line-clamp-6">{s.text}</p>
+                    <div className="mt-2 flex items-center gap-2">
+                      <div className="flex-1"><CopyButton text={s.text} /></div>
+                      <Button size="sm" variant="secondary" className="h-8 text-xs text-rose-400 hover:text-rose-300" onClick={() => deleteScheduled(s.id)} title="Eliminar"><Trash2 className="h-3.5 w-3.5" /></Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </SheetContent>
+          </Sheet>
           <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
             <SheetTrigger asChild><Button size="sm" variant="secondary" className="glow-primary"><History className="h-4 w-4 sm:mr-1.5" /><span className="hidden sm:inline">Historial</span></Button></SheetTrigger>
             <SheetContent side="right" className="glass border-border/60 w-full sm:max-w-md flex flex-col">
@@ -469,13 +517,15 @@ export default function App() {
                 </TabsContent>
 
                 <TabsContent value="compose" className="mt-0 space-y-3">
-                  {/* FASE 3: Selector de Nicho SimCluster */}
+                  {/* FASE 3: Nicho SimCluster (campo LIBRE + presets rápidos) */}
                   <div>
-                    <label className="mb-1.5 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground font-mono"><Boxes className="h-3.5 w-3.5 text-fuchsia-400" /> SimCluster (nicho algorítmico)</label>
-                    <Select value={cluster} onValueChange={setCluster}>
-                      <SelectTrigger className="h-10 bg-background/50"><SelectValue placeholder="Elige un clúster" /></SelectTrigger>
-                      <SelectContent>{SIM_CLUSTERS.map((c) => (<SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>))}</SelectContent>
-                    </Select>
+                    <label className="mb-1.5 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground font-mono"><Boxes className="h-3.5 w-3.5 text-fuchsia-400" /> SimCluster · escribe tu nicho</label>
+                    <Input value={cluster} onChange={(e) => setCluster(e.target.value)} placeholder="Ej: Fitness, Fotografía, Cocina vegana, Trading cripto..." className="h-10 bg-background/50" />
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {SIM_CLUSTERS.map((c) => (
+                        <button key={c.value} type="button" onClick={() => setCluster(c.label)} className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${cluster === c.label ? 'border-fuchsia-500/50 bg-fuchsia-500/15 text-fuchsia-300' : 'border-border/60 text-muted-foreground hover:text-foreground'}`}>{c.label}</button>
+                      ))}
+                    </div>
                   </div>
 
                   {/* Compositor principal */}

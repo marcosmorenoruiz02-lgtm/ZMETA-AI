@@ -443,10 +443,23 @@ const CTA_PHRASES = ['comenta', 'responde', 'qué opinas', 'que opinas', 'cuént
 
 function clamp(n) { return Math.max(0, Math.min(100, Math.round(n))) }
 
+// Resuelve el nicho: clave conocida, etiqueta conocida, o nicho LIBRE escrito por el usuario
+const NICHE_STOP = new Set(['para', 'con', 'los', 'las', 'del', 'de', 'la', 'el', 'y', 'e', 'o', 'u', 'a', 'en', 'un', 'una', 'the', 'and', 'for'])
+function resolveClusterConfig(cluster) {
+  const raw = String(cluster || '').trim()
+  if (!raw) return CLUSTER_CONFIG.tech_ai
+  if (CLUSTER_CONFIG[raw]) return CLUSTER_CONFIG[raw]
+  const byLabel = Object.values(CLUSTER_CONFIG).find((c) => c.label.toLowerCase() === raw.toLowerCase())
+  if (byLabel) return byLabel
+  // Nicho personalizado: deriva keywords de las palabras significativas del propio nicho
+  const keywords = raw.toLowerCase().split(/[^a-záéíóúñ0-9]+/i).filter((w) => w.length >= 4 && !NICHE_STOP.has(w))
+  return { label: raw, keywords: keywords.length ? keywords : [raw.toLowerCase()], ctaHint: `¿Qué opinas sobre ${raw}? Comenta tu experiencia 👇`, custom: true }
+}
+
 function computeBookmarkScore(text = '', cluster = 'tech_ai', hasThread = false, firstReply = '') {
   const raw = String(text || '')
   const t = raw.toLowerCase()
-  const cfg = CLUSTER_CONFIG[cluster] || CLUSTER_CONFIG.tech_ai
+  const cfg = resolveClusterConfig(cluster)
   const lines = raw.split('\n').filter((l) => l.trim().length)
   const links = raw.match(URL_RE) || []
   const hasExternalLink = links.length > 0
@@ -461,7 +474,10 @@ function computeBookmarkScore(text = '', cluster = 'tech_ai', hasThread = false,
   const saveVerbs = /(guarda|guárdalo|referencia|plantilla|checklist|hilo|no pierdas|para después|bookmark)/.test(t)
   const len = raw.trim().length
   const hasQuestion = raw.includes('?') || raw.includes('¿')
-  const hasCtaPhrase = CTA_PHRASES.some((p) => t.includes(p))
+  const hasCtaPhrase = CTA_PHRASES.some((p) => {
+    if (/^[a-záéíóúñ]+$/i.test(p)) return new RegExp(`(^|[^a-záéíóúñ])${p}([^a-záéíóúñ]|$)`, 'i').test(t)
+    return t.includes(p)
+  })
 
   // sub-scores
   let structure = 20
@@ -710,7 +726,7 @@ async function handleRoute(request, { params }) {
       const target = (body?.target || '').trim()
       if (!text) return handleCORS(NextResponse.json({ error: "El campo 'text' es obligatorio" }, { status: 400 }))
       if (!target) return handleCORS(NextResponse.json({ error: "El campo 'target' (mejora a aplicar) es obligatorio" }, { status: 400 }))
-      const label = (CLUSTER_CONFIG[cluster] || CLUSTER_CONFIG.tech_ai).label
+      const label = resolveClusterConfig(cluster).label
       const prompt = `Eres un copywriter viral senior para X (Twitter), especializado en el nicho "${label}". Reescribe y MEJORA el siguiente post aplicando ESPECÍFICAMENTE esta mejora: "${target}".
 
 POST ACTUAL:
@@ -795,6 +811,15 @@ Devuelve ÚNICAMENTE un JSON con esta estructura EXACTA:
       const items = await database.collection('scheduled').find({}).sort({ scheduledAt: 1 }).limit(50).toArray()
       const cleaned = items.map(({ _id, ...rest }) => rest)
       return handleCORS(NextResponse.json({ items: cleaned, count: cleaned.length }))
+    }
+
+    if (route === '/schedule' && method === 'DELETE') {
+      const { searchParams } = new URL(request.url)
+      const id = searchParams.get('id')
+      if (!id) return handleCORS(NextResponse.json({ error: "Falta el parámetro 'id'" }, { status: 400 }))
+      await database.collection('scheduled').deleteOne({ id })
+      const count = await database.collection('scheduled').countDocuments({ status: 'scheduled' })
+      return handleCORS(NextResponse.json({ ok: true, count }))
     }
 
     // Instagram: extraer metadatos + MP4 (RapidAPI 7scorp)
