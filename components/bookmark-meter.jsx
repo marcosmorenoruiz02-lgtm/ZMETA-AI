@@ -2,7 +2,7 @@
 
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
-import { Bookmark, Layers, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
+import { Bookmark, Layers, AlertCircle, CheckCircle2, Loader2, Wand2 } from 'lucide-react'
 
 const GRADE = {
   low: { label: 'Bajo', cls: 'bg-rose-500/15 text-rose-400 border-rose-500/30' },
@@ -18,7 +18,7 @@ const BARS = [
   { key: 'saveability', label: 'Guardabilidad', color: 'bg-emerald-500' },
 ]
 
-export default function BookmarkMeter({ data, loading = false }) {
+export default function BookmarkMeter({ data, loading = false, onFix, fixing = null }) {
   const score = data?.score ?? 0
   const g = GRADE[data?.grade] || GRADE.medium
   const bd = data?.breakdown || {}
@@ -61,11 +61,28 @@ export default function BookmarkMeter({ data, loading = false }) {
 
       {Array.isArray(data?.missing_elements) && data.missing_elements.length > 0 ? (
         <div className="mt-3">
-          <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-mono">Para subir el score</span>
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-mono">Para subir el score · toca para arreglar con IA</span>
           <ul className="mt-1.5 space-y-1.5">
-            {data.missing_elements.map((m, i) => (
-              <li key={i} className="flex items-start gap-2 text-xs text-amber-500/90"><AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-400" /> {m}</li>
-            ))}
+            {data.missing_elements.map((m, i) => {
+              const isFixing = fixing === m
+              const anyFixing = !!fixing
+              return (
+                <li key={i}>
+                  <button
+                    type="button"
+                    onClick={() => onFix && onFix(m)}
+                    disabled={!onFix || anyFixing}
+                    className="group flex w-full items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-2.5 py-2 text-left text-xs text-amber-500/90 transition-colors hover:border-amber-400/50 hover:bg-amber-500/10 disabled:opacity-60"
+                  >
+                    {isFixing ? <Loader2 className="h-3.5 w-3.5 mt-0.5 shrink-0 animate-spin text-amber-400" /> : <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-400" />}
+                    <span className="flex-1">{m}</span>
+                    <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-300 opacity-80 group-hover:opacity-100 shrink-0">
+                      <Wand2 className="h-3 w-3" /> {isFixing ? 'Arreglando…' : 'Arreglar'}
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         </div>
       ) : data ? (

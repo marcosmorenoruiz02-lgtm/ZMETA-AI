@@ -701,6 +701,35 @@ async function handleRoute(request, { params }) {
       return handleCORS(NextResponse.json(result))
     }
 
+    // Sugerencias de 1 clic: reescribe el post con IA aplicando una mejora concreta (sube el score)
+    if (route === '/bookmark-optimize' && method === 'POST') {
+      const body = await request.json()
+      const text = (body?.text || '').trim()
+      const cluster = body?.cluster || 'tech_ai'
+      const firstReply = (body?.firstReply || '').trim()
+      const target = (body?.target || '').trim()
+      if (!text) return handleCORS(NextResponse.json({ error: "El campo 'text' es obligatorio" }, { status: 400 }))
+      if (!target) return handleCORS(NextResponse.json({ error: "El campo 'target' (mejora a aplicar) es obligatorio" }, { status: 400 }))
+      const label = (CLUSTER_CONFIG[cluster] || CLUSTER_CONFIG.tech_ai).label
+      const prompt = `Eres un copywriter viral senior para X (Twitter), especializado en el nicho "${label}". Reescribe y MEJORA el siguiente post aplicando ESPECÍFICAMENTE esta mejora: "${target}".
+
+POST ACTUAL:
+"""${text}"""
+${firstReply ? `\nPrimer comentario / link ya aislado (NO lo incluyas en el texto principal): "${firstReply}"` : ''}
+
+REGLAS OBLIGATORIAS:
+- Mantén el mensaje e intención centrales del autor y el mismo idioma (español).
+- Aplica la mejora pedida para aumentar la "guardabilidad" (bookmark score): más accionable, mejor estructura, gancho más fuerte según corresponda.
+- Máximo 280 caracteres si es un post simple; si necesita más, estructúralo en líneas limpias con lista numerada o viñetas cuando aporte.
+- NO inventes estadísticas ni datos falsos. Si la mejora pide un dato/cifra que NO está en el post, inserta un marcador editable EXACTO "[tu dato aquí]" para que el usuario lo complete (no inventes números concretos).
+- NO incluyas ningún enlace/URL externo en el texto principal.
+- Nada de placeholders tipo [IMAGEN]/[VIDEO]/[LINK].
+
+Responde ÚNICAMENTE con JSON válido: { "text": "post mejorado listo para publicar", "rationale": "qué cambiaste en 1 frase" }`
+      const improved = await callGemini(prompt, 0.7)
+      return handleCORS(NextResponse.json({ text: improved?.text || text, rationale: improved?.rationale || '', applied: target }))
+    }
+
     if (route === '/text-template' && method === 'POST') {
       const body = await request.json()
       const format = body?.format

@@ -153,6 +153,7 @@ export default function App() {
   const [composeReply, setComposeReply] = useState('')
   const [bmScore, setBmScore] = useState(null)
   const [bmLoading, setBmLoading] = useState(false)
+  const [bmFixing, setBmFixing] = useState(null)
   const [composeScheduling, setComposeScheduling] = useState(false)
   const alertShownRef = useRef(false)
 
@@ -300,6 +301,18 @@ export default function App() {
     toast.success('Link movido a First-Reply')
   }
   const clearReply = () => setComposeReply('')
+
+  // Sugerencias de 1 clic: reescribe el post con IA para aplicar un "elemento faltante" y subir el score
+  const fixMissing = async (target) => {
+    if (!composeText.trim() || bmFixing) return
+    setBmFixing(target)
+    try {
+      const res = await fetch('/api/bookmark-optimize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: composeText, cluster, firstReply: composeReply, target }) })
+      const json = await res.json()
+      if (!res.ok) { toast.error(json?.error || 'No se pudo optimizar'); return }
+      if (json?.text) { setComposeText(json.text); successToast('Post optimizado ✨', json.rationale || target) }
+    } catch (e) { toast.error('Error al optimizar con IA') } finally { setBmFixing(null) }
+  }
 
   // FASE 4: programar respetando el chequeo de CTA
   const scheduleCompose = async () => {
@@ -490,7 +503,7 @@ export default function App() {
                   )}
 
                   {/* FASE 1: Bookmark Score en tiempo real */}
-                  <BookmarkMeter data={bmScore} loading={bmLoading} />
+                  <BookmarkMeter data={bmScore} loading={bmLoading} onFix={fixMissing} fixing={bmFixing} />
 
                   {/* FASE 4: chequeo de CTA (Early-Velocity) */}
                   {composeText.trim() && bmScore && !bmScore?.cta?.present && (
