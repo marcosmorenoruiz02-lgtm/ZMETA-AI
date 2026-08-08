@@ -1,43 +1,44 @@
 #!/usr/bin/env python3
 """
-FORENSIC MULTIMODAL ENGINE - Anti-hallucination Testing
-Tests the evidence-based vision-generate endpoint to verify it NO LONGER hallucinates
-when there's insufficient evidence (e.g., black image).
+ZMETA-AI / ViralForge Backend - FULL END-TO-END VERIFICATION
+Tests all main endpoints and reports PASS/FAIL with detailed error messages.
 """
 
 import requests
-import base64
-import io
 import time
-import json
+import base64
+from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
-# Backend URL
+# Base URL from .env
 BASE_URL = "https://viral-insights-forge.preview.emergentagent.com/api"
 
-# Hallucination markers to search for (case-insensitive)
-HALLUCINATION_MARKERS = [
-    "el vacío",
-    "vacio es el gancho",
-    "misterio",
-    "introspección",
-    "la nada",
-    "pattern interrupt",
-    "ausencia como gancho",
-    "catalizador de la imaginación"
-]
+# Test results storage
+test_results = []
 
-def create_black_image(width=512, height=512):
-    """Create a completely black PNG image."""
-    img = Image.new('RGB', (width, height), color='black')
-    return img
+def log_test(test_name, passed, details="", response_time=None):
+    """Log test result"""
+    status = "✅ PASS" if passed else "❌ FAIL"
+    result = {
+        "test": test_name,
+        "status": status,
+        "passed": passed,
+        "details": details,
+        "response_time": response_time
+    }
+    test_results.append(result)
+    time_str = f" ({response_time:.2f}s)" if response_time else ""
+    print(f"{status}{time_str} - {test_name}")
+    if details:
+        print(f"  Details: {details}")
+    print()
 
-def create_text_image(text, width=600, height=300, bg_color='white', text_color='black'):
-    """Create a white PNG with large black text."""
-    img = Image.new('RGB', (width, height), color=bg_color)
+def create_test_image(text, width=600, height=300):
+    """Create a test image with text using PIL"""
+    img = Image.new('RGB', (width, height), color='white')
     draw = ImageDraw.Draw(img)
     
-    # Try to use a large font, fallback to default if not available
+    # Try to use a default font, fallback to basic if not available
     try:
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)
     except:
@@ -50,445 +51,633 @@ def create_text_image(text, width=600, height=300, bg_color='white', text_color=
     x = (width - text_width) / 2
     y = (height - text_height) / 2
     
-    draw.text((x, y), text, fill=text_color, font=font)
-    return img
-
-def image_to_data_url(img):
-    """Convert PIL Image to base64 data URL."""
-    buffer = io.BytesIO()
+    # Draw text
+    draw.text((x, y), text, fill='black', font=font)
+    
+    # Convert to base64 data URL
+    buffer = BytesIO()
     img.save(buffer, format='PNG')
-    buffer.seek(0)
-    img_base64 = base64.b64encode(buffer.read()).decode('utf-8')
-    return f"data:image/png;base64,{img_base64}"
+    img_str = base64.b64encode(buffer.getvalue()).decode()
+    return f"data:image/png;base64,{img_str}"
 
-def search_hallucination_markers(response_json):
-    """Search for hallucination markers in the entire JSON response (case-insensitive)."""
-    response_str = json.dumps(response_json).lower()
-    found_markers = []
-    for marker in HALLUCINATION_MARKERS:
-        if marker.lower() in response_str:
-            found_markers.append(marker)
-    return found_markers
-
-def test_1_black_image():
-    """TEST 1 - BLACK IMAGE (the exact hallucination scenario)"""
-    print("\n" + "="*80)
-    print("TEST 1 - BLACK IMAGE (Anti-hallucination Critical Test)")
-    print("="*80)
+def test_analyze_user_mode():
+    """TEST 1: POST /api/analyze-and-generate - MODE USER"""
+    test_name = "POST /api/analyze-and-generate - MODE USER (@MorrrMorrr63705)"
     
     try:
-        # Create 512x512 completely black PNG
-        print("Creating 512x512 completely black PNG image...")
-        black_img = create_black_image(512, 512)
-        black_data_url = image_to_data_url(black_img)
-        print(f"✓ Black image created (data URL length: {len(black_data_url)} chars)")
+        payload = {
+            "type": "user",
+            "query": "@MorrrMorrr63705"
+        }
         
-        # POST to /api/vision-generate with NO note
-        print("\nPOSTing to /api/vision-generate with black image (NO note)...")
         start_time = time.time()
-        response = requests.post(
-            f"{BASE_URL}/vision-generate",
-            json={"image": black_data_url},
-            timeout=90
-        )
-        elapsed = time.time() - start_time
-        print(f"Response received in {elapsed:.2f}s")
+        response = requests.post(f"{BASE_URL}/analyze-and-generate", json=payload, timeout=150)
+        response_time = time.time() - start_time
         
-        # (a) Verify HTTP 200
-        print(f"\n(a) HTTP Status: {response.status_code}")
+        # Check for Twitter API 402 error (credits exhausted)
+        if response.status_code == 402 or (response.status_code >= 400 and "credits" in response.text.lower()):
+            log_test(test_name, False, 
+                    f"EXTERNAL DEPENDENCY ISSUE: Twitter API credits exhausted (HTTP {response.status_code}). User must recharge. NOT a code bug.",
+                    response_time)
+            return
+        
         if response.status_code != 200:
-            print(f"❌ FAILED - Expected HTTP 200, got {response.status_code}")
-            print(f"Response: {response.text[:500]}")
-            return False
-        print("✓ HTTP 200 OK")
+            log_test(test_name, False, 
+                    f"HTTP {response.status_code}: {response.text[:200]}", 
+                    response_time)
+            return
         
         data = response.json()
+        errors = []
         
-        # (b) CRITICAL: Search for hallucination markers
-        print("\n(b) CRITICAL - Searching for hallucination markers...")
-        found_markers = search_hallucination_markers(data)
-        if found_markers:
-            print(f"❌ FAILED - Found hallucination markers: {found_markers}")
-            print(f"Full response (first 2000 chars): {json.dumps(data, indent=2, ensure_ascii=False)[:2000]}")
-            return False
-        print("✓ No hallucination markers found (el vacío, misterio, introspección, etc.)")
+        # Validate personality object
+        if "personality" not in data:
+            errors.append("Missing 'personality' object")
         
-        # (c) Verify evidence object with evidenceSufficient=false or evidenceLevel="bajo"
-        print("\n(c) Checking evidence object...")
-        evidence = data.get('evidence')
-        if not evidence:
-            print("❌ FAILED - No 'evidence' object in response")
-            return False
-        print(f"✓ evidence object present: {json.dumps(evidence, indent=2, ensure_ascii=False)[:500]}")
-        
-        evidence_sufficient = evidence.get('evidenceSufficient')
-        evidence_level = evidence.get('evidenceLevel', '').lower()
-        if evidence_sufficient is False or evidence_level == 'bajo':
-            print(f"✓ evidenceSufficient={evidence_sufficient}, evidenceLevel={evidence_level}")
+        # Validate analysis.generatedTweets
+        if "analysis" not in data or "generatedTweets" not in data["analysis"]:
+            errors.append("Missing 'analysis.generatedTweets'")
         else:
-            print(f"❌ FAILED - Expected evidenceSufficient=false or evidenceLevel='bajo', got evidenceSufficient={evidence_sufficient}, evidenceLevel={evidence_level}")
-            return False
-        
-        # (d) Verify vision.tone and/or vision.description use exact string
-        print("\n(d) Checking vision.tone and vision.description...")
-        vision = data.get('vision', {})
-        NO_EVIDENCE = "No hay suficiente evidencia para determinar este aspecto."
-        
-        tone = vision.get('tone', '')
-        description = vision.get('description', '')
-        
-        print(f"vision.tone: {tone[:200]}")
-        print(f"vision.description: {description[:200]}")
-        
-        if NO_EVIDENCE in tone or NO_EVIDENCE in description:
-            print(f"✓ Found exact phrase '{NO_EVIDENCE}' in vision fields")
-        else:
-            print(f"⚠️ WARNING - Expected exact phrase not found in vision.tone or vision.description")
-            # Not failing the test as long as no hallucination markers are present
-        
-        # (e) Verify combined_hook_angle
-        print("\n(e) Checking combined_hook_angle...")
-        combined_hook_angle = data.get('combined_hook_angle', '')
-        print(f"combined_hook_angle: {combined_hook_angle}")
-        
-        if NO_EVIDENCE in combined_hook_angle or "no hay suficiente evidencia" in combined_hook_angle.lower():
-            print(f"✓ combined_hook_angle indicates insufficient evidence")
-        else:
-            print(f"⚠️ WARNING - combined_hook_angle doesn't clearly indicate insufficient evidence")
-        
-        # (f) Verify generatedTweets has 3 items with "No hay suficiente evidencia"
-        print("\n(f) Checking generatedTweets...")
-        generated_tweets = data.get('analysis', {}).get('generatedTweets', [])
-        print(f"Number of generatedTweets: {len(generated_tweets)}")
-        
-        if len(generated_tweets) != 3:
-            print(f"❌ FAILED - Expected 3 generatedTweets, got {len(generated_tweets)}")
-            return False
-        print("✓ Exactly 3 generatedTweets")
-        
-        insufficient_evidence_count = 0
-        for i, tweet in enumerate(generated_tweets):
-            text = tweet.get('text', '')
-            hook_strength = tweet.get('hookStrength')
-            retention = tweet.get('retention', '')
-            
-            print(f"\nTweet {i+1}:")
-            print(f"  text: {text[:150]}")
-            print(f"  hookStrength: {hook_strength}")
-            print(f"  retention: {retention}")
-            
-            if "no hay suficiente evidencia" in text.lower():
-                insufficient_evidence_count += 1
-                print(f"  ✓ Contains 'No hay suficiente evidencia'")
-            
-            if hook_strength == 0:
-                print(f"  ✓ hookStrength is 0")
+            tweets = data["analysis"]["generatedTweets"]
+            if len(tweets) != 3:
+                errors.append(f"Expected EXACTLY 3 generatedTweets, got {len(tweets)}")
             else:
-                print(f"  ⚠️ hookStrength is {hook_strength} (expected 0)")
-            
-            if retention.lower() == 'baja':
-                print(f"  ✓ retention is 'Baja'")
-            else:
-                print(f"  ⚠️ retention is '{retention}' (expected 'Baja')")
+                # Check each tweet has required fields
+                required_fields = ["voiceScore", "hookStrength", "retention", "weakPoint", "thread", "firstSelfReply"]
+                for i, tweet in enumerate(tweets):
+                    for field in required_fields:
+                        if field not in tweet:
+                            errors.append(f"Tweet {i+1} missing '{field}'")
+                        elif field == "voiceScore" and not isinstance(tweet[field], (int, type(None))):
+                            errors.append(f"Tweet {i+1} voiceScore must be numeric or null, got {type(tweet[field])}")
+                        elif field == "hookStrength" and not (isinstance(tweet[field], int) and 0 <= tweet[field] <= 100):
+                            errors.append(f"Tweet {i+1} hookStrength must be 0-100, got {tweet[field]}")
         
-        if insufficient_evidence_count == 3:
-            print(f"\n✓ All 3 tweets contain 'No hay suficiente evidencia'")
+        # Validate growth object
+        if "growth" not in data:
+            errors.append("Missing 'growth' object")
+        elif data["growth"]:
+            growth = data["growth"]
+            if "topBanners" not in growth or len(growth["topBanners"]) != 3:
+                errors.append("growth.topBanners must have 3 items")
+            if "loopOutro" not in growth or not growth["loopOutro"]:
+                errors.append("growth.loopOutro missing or empty")
+            if "replyStrategy" not in growth or not growth["replyStrategy"]:
+                errors.append("growth.replyStrategy missing or empty")
+        
+        # Validate primeTimes
+        if "primeTimes" not in data:
+            errors.append("Missing 'primeTimes' array")
+        
+        # Validate metrics
+        if "metrics" not in data:
+            errors.append("Missing 'metrics' object")
+        
+        # Validate originalTweets sorted DESC
+        if "originalTweets" not in data or len(data["originalTweets"]) == 0:
+            errors.append("Missing or empty 'originalTweets'")
         else:
-            print(f"\n⚠️ Only {insufficient_evidence_count}/3 tweets contain 'No hay suficiente evidencia'")
+            tweets = data["originalTweets"]
+            # Check if sorted by engagement score (descending)
+            for i in range(len(tweets) - 1):
+                score_a = tweets[i].get("views", 0) * 0.05 + tweets[i].get("likes", 0) + tweets[i].get("retweets", 0) * 2 + tweets[i].get("replies", 0) * 1.5 + tweets[i].get("quotes", 0) * 3
+                score_b = tweets[i+1].get("views", 0) * 0.05 + tweets[i+1].get("likes", 0) + tweets[i+1].get("retweets", 0) * 2 + tweets[i+1].get("replies", 0) * 1.5 + tweets[i+1].get("quotes", 0) * 3
+                if score_a < score_b:
+                    errors.append(f"originalTweets NOT sorted DESC by composite score (position {i} < {i+1})")
+                    break
         
-        print("\n" + "="*80)
-        print("✅ TEST 1 PASSED - No hallucinations detected, evidence-based response confirmed")
-        print("="*80)
-        return True
+        # Check response time
+        if response_time >= 55:
+            errors.append(f"Response time {response_time:.2f}s exceeds 55s threshold")
         
+        if errors:
+            log_test(test_name, False, "; ".join(errors), response_time)
+        else:
+            log_test(test_name, True, 
+                    f"All validations passed. personality present, 3 tweets with all fields, growth/primeTimes/metrics present, originalTweets sorted DESC",
+                    response_time)
+    
     except Exception as e:
-        print(f"\n❌ TEST 1 FAILED with exception: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False
+        log_test(test_name, False, f"Exception: {str(e)}")
 
-def test_2_image_with_evidence():
-    """TEST 2 - IMAGE WITH REAL EVIDENCE"""
-    print("\n" + "="*80)
-    print("TEST 2 - IMAGE WITH REAL EVIDENCE")
-    print("="*80)
+def test_analyze_topic_mode():
+    """TEST 2: POST /api/analyze-and-generate - MODE TOPIC"""
+    test_name = "POST /api/analyze-and-generate - MODE TOPIC (Inteligencia Artificial, minFaves=100)"
     
     try:
-        # Create 600x300 white PNG with text
-        print("Creating 600x300 white PNG with text 'CURSO DE PYTHON - 50% OFF HOY'...")
-        text_img = create_text_image("CURSO DE PYTHON\n50% OFF HOY", 600, 300)
-        text_data_url = image_to_data_url(text_img)
-        print(f"✓ Text image created (data URL length: {len(text_data_url)} chars)")
+        payload = {
+            "type": "topic",
+            "query": "Inteligencia Artificial",
+            "minFaves": 100
+        }
         
-        # POST to /api/vision-generate
-        print("\nPOSTing to /api/vision-generate with text image...")
         start_time = time.time()
-        response = requests.post(
-            f"{BASE_URL}/vision-generate",
-            json={"image": text_data_url},
-            timeout=90
-        )
-        elapsed = time.time() - start_time
-        print(f"Response received in {elapsed:.2f}s")
+        response = requests.post(f"{BASE_URL}/analyze-and-generate", json=payload, timeout=150)
+        response_time = time.time() - start_time
         
-        # (a) Verify HTTP 200
-        print(f"\n(a) HTTP Status: {response.status_code}")
+        # Check for Twitter API 402 error
+        if response.status_code == 402 or (response.status_code >= 400 and "credits" in response.text.lower()):
+            log_test(test_name, False, 
+                    f"EXTERNAL DEPENDENCY ISSUE: Twitter API credits exhausted (HTTP {response.status_code}). User must recharge. NOT a code bug.",
+                    response_time)
+            return
+        
         if response.status_code != 200:
-            print(f"❌ FAILED - Expected HTTP 200, got {response.status_code}")
-            print(f"Response: {response.text[:500]}")
-            return False
-        print("✓ HTTP 200 OK")
+            log_test(test_name, False, 
+                    f"HTTP {response.status_code}: {response.text[:200]}", 
+                    response_time)
+            return
         
         data = response.json()
+        errors = []
         
-        # (b) Verify evidence.evidenceSufficient=true
-        print("\n(b) Checking evidence.evidenceSufficient...")
-        evidence = data.get('evidence', {})
-        evidence_sufficient = evidence.get('evidenceSufficient')
-        if evidence_sufficient is True:
-            print(f"✓ evidenceSufficient=true")
+        # Validate all originalTweets have likes >= 100
+        if "originalTweets" not in data or len(data["originalTweets"]) == 0:
+            errors.append("Missing or empty 'originalTweets'")
         else:
-            print(f"❌ FAILED - Expected evidenceSufficient=true, got {evidence_sufficient}")
-            return False
+            for i, tweet in enumerate(data["originalTweets"]):
+                if tweet.get("likes", 0) < 100:
+                    errors.append(f"Tweet {i+1} has likes={tweet.get('likes', 0)} < 100 (minFaves filter not working)")
         
-        # (c) Verify evidence.usableFacts is non-empty array
-        print("\n(c) Checking evidence.usableFacts...")
-        usable_facts = evidence.get('usableFacts', [])
-        if not isinstance(usable_facts, list) or len(usable_facts) == 0:
-            print(f"❌ FAILED - Expected non-empty usableFacts array, got {usable_facts}")
-            return False
-        print(f"✓ usableFacts is non-empty array with {len(usable_facts)} items")
-        
-        for i, fact in enumerate(usable_facts[:3]):  # Show first 3
-            print(f"  Fact {i+1}: {json.dumps(fact, ensure_ascii=False)[:200]}")
-            if 'fact' not in fact or 'origen' not in fact or 'confidence' not in fact:
-                print(f"  ❌ Missing required fields (fact/origen/confidence)")
-                return False
-            if fact.get('confidence', 0) < 80:
-                print(f"  ❌ Confidence {fact.get('confidence')} < 80")
-                return False
-        print("✓ All usableFacts have required fields (fact/origen/confidence>=80)")
-        
-        # (d) Verify vision.ocr contains real text
-        print("\n(d) Checking vision.ocr...")
-        vision = data.get('vision', {})
-        ocr = vision.get('ocr', '')
-        print(f"vision.ocr: {ocr}")
-        
-        if 'PYTHON' in ocr.upper() or '50%' in ocr or 'OFF' in ocr.upper() or 'CURSO' in ocr.upper():
-            print("✓ OCR contains real text from image (PYTHON/50%/OFF/CURSO)")
+        # Validate analysis.generatedTweets
+        if "analysis" not in data or "generatedTweets" not in data["analysis"]:
+            errors.append("Missing 'analysis.generatedTweets'")
         else:
-            print(f"⚠️ WARNING - OCR doesn't contain expected text, but may have extracted something else")
+            tweets = data["analysis"]["generatedTweets"]
+            if len(tweets) != 3:
+                errors.append(f"Expected EXACTLY 3 generatedTweets, got {len(tweets)}")
         
-        # (e) Verify analysis.generatedTweets has exactly 3 items with all fields
-        print("\n(e) Checking analysis.generatedTweets...")
-        generated_tweets = data.get('analysis', {}).get('generatedTweets', [])
-        if len(generated_tweets) != 3:
-            print(f"❌ FAILED - Expected 3 generatedTweets, got {len(generated_tweets)}")
-            return False
-        print("✓ Exactly 3 generatedTweets")
+        # Check response time
+        if response_time >= 55:
+            errors.append(f"Response time {response_time:.2f}s exceeds 55s threshold")
         
-        required_fields = ['style', 'text', 'rationale', 'hookStrength', 'retention', 'weakPoint', 'thread']
-        for i, tweet in enumerate(generated_tweets):
-            print(f"\nTweet {i+1}:")
-            for field in required_fields:
-                if field not in tweet:
-                    print(f"  ❌ Missing field: {field}")
-                    return False
-                print(f"  ✓ {field}: {str(tweet[field])[:100]}")
-        print("✓ All tweets have required fields")
-        
-        # (f) Verify top-level growth object
-        print("\n(f) Checking growth object...")
-        growth = data.get('growth')
-        if not growth:
-            print("❌ FAILED - No growth object")
-            return False
-        print(f"✓ growth object present: {json.dumps(growth, indent=2, ensure_ascii=False)[:300]}")
-        
-        # (g) Verify tweets are grounded in real text
-        print("\n(g) Checking if tweets are grounded in real text...")
-        grounded_count = 0
-        for i, tweet in enumerate(generated_tweets):
-            text = tweet.get('text', '').upper()
-            if 'PYTHON' in text or 'CURSO' in text or '50%' in text or 'DESCUENTO' in text or 'OFERTA' in text:
-                grounded_count += 1
-                print(f"  Tweet {i+1}: ✓ Grounded in real content")
-            else:
-                print(f"  Tweet {i+1}: ⚠️ May not be directly grounded in image text")
-        
-        if grounded_count > 0:
-            print(f"✓ At least {grounded_count}/3 tweets are grounded in real text")
+        if errors:
+            log_test(test_name, False, "; ".join(errors), response_time)
         else:
-            print("⚠️ WARNING - Tweets may not be grounded in the image text")
-        
-        print("\n" + "="*80)
-        print("✅ TEST 2 PASSED - Evidence-based generation working correctly")
-        print("="*80)
-        return True
-        
+            log_test(test_name, True, 
+                    f"All validations passed. All originalTweets have likes >= 100, 3 generatedTweets present",
+                    response_time)
+    
     except Exception as e:
-        print(f"\n❌ TEST 2 FAILED with exception: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False
+        log_test(test_name, False, f"Exception: {str(e)}")
 
-def test_3_multiple_frames():
-    """TEST 3 - MULTIPLE FRAMES"""
-    print("\n" + "="*80)
-    print("TEST 3 - MULTIPLE FRAMES")
-    print("="*80)
+def test_vision_generate():
+    """TEST 3: POST /api/vision-generate"""
+    test_name = "POST /api/vision-generate (PIL image with text)"
     
     try:
-        # Create 3 different 400x200 images with distinct text
-        print("Creating 3 different 400x200 images with distinct text...")
-        frame1 = create_text_image("FRAME UNO", 400, 200)
-        frame2 = create_text_image("OFERTA", 400, 200)
-        frame3 = create_text_image("SUSCRIBETE", 400, 200)
+        # Create test image
+        image_data_url = create_test_image("CURSO DE PYTHON\n50% OFF", 600, 300)
         
-        frame1_url = image_to_data_url(frame1)
-        frame2_url = image_to_data_url(frame2)
-        frame3_url = image_to_data_url(frame3)
+        payload = {
+            "image": image_data_url
+        }
         
-        print(f"✓ 3 frames created")
-        
-        # POST to /api/vision-generate with frames array
-        print("\nPOSTing to /api/vision-generate with 3 frames...")
         start_time = time.time()
-        response = requests.post(
-            f"{BASE_URL}/vision-generate",
-            json={"frames": [frame1_url, frame2_url, frame3_url]},
-            timeout=90
-        )
-        elapsed = time.time() - start_time
-        print(f"Response received in {elapsed:.2f}s")
+        response = requests.post(f"{BASE_URL}/vision-generate", json=payload, timeout=150)
+        response_time = time.time() - start_time
         
-        # Verify HTTP 200
-        print(f"\nHTTP Status: {response.status_code}")
         if response.status_code != 200:
-            print(f"❌ FAILED - Expected HTTP 200, got {response.status_code}")
-            print(f"Response: {response.text[:500]}")
-            return False
-        print("✓ HTTP 200 OK")
+            log_test(test_name, False, 
+                    f"HTTP {response.status_code}: {response.text[:200]}", 
+                    response_time)
+            return
         
         data = response.json()
+        errors = []
         
-        # Verify evidence object present
-        print("\nChecking evidence object...")
-        evidence = data.get('evidence')
-        if not evidence:
-            print("❌ FAILED - No evidence object")
-            return False
-        print(f"✓ evidence object present")
-        
-        # Verify analysis.generatedTweets has 3 items
-        print("\nChecking analysis.generatedTweets...")
-        generated_tweets = data.get('analysis', {}).get('generatedTweets', [])
-        if len(generated_tweets) != 3:
-            print(f"❌ FAILED - Expected 3 generatedTweets, got {len(generated_tweets)}")
-            return False
-        print("✓ Exactly 3 generatedTweets")
-        
-        # Verify response time < 55s
-        print(f"\nResponse time: {elapsed:.2f}s")
-        if elapsed < 55:
-            print(f"✓ Response time {elapsed:.2f}s < 55s")
+        # Validate evidence object
+        if "evidence" not in data:
+            errors.append("Missing 'evidence' object")
         else:
-            print(f"⚠️ WARNING - Response time {elapsed:.2f}s >= 55s (may need optimization)")
+            evidence = data["evidence"]
+            if "evidenceSufficient" not in evidence:
+                errors.append("Missing 'evidence.evidenceSufficient'")
+            elif evidence["evidenceSufficient"] != True:
+                errors.append(f"evidence.evidenceSufficient should be true for image with text, got {evidence['evidenceSufficient']}")
+            
+            if "usableFacts" not in evidence or len(evidence["usableFacts"]) == 0:
+                errors.append("evidence.usableFacts should be non-empty for image with text")
         
-        print("\n" + "="*80)
-        print("✅ TEST 3 PASSED - Multiple frames working correctly")
-        print("="*80)
-        return True
+        # Validate vision.ocr contains the text
+        if "vision" not in data or "ocr" not in data["vision"]:
+            errors.append("Missing 'vision.ocr'")
+        else:
+            ocr_text = data["vision"]["ocr"].upper()
+            if "PYTHON" not in ocr_text and "50" not in ocr_text:
+                errors.append(f"vision.ocr should contain 'PYTHON' or '50', got: {data['vision']['ocr'][:100]}")
         
+        # Validate analysis.generatedTweets
+        if "analysis" not in data or "generatedTweets" not in data["analysis"]:
+            errors.append("Missing 'analysis.generatedTweets'")
+        else:
+            tweets = data["analysis"]["generatedTweets"]
+            if len(tweets) != 3:
+                errors.append(f"Expected EXACTLY 3 generatedTweets, got {len(tweets)}")
+            else:
+                # Check for hallucination markers
+                hallucination_markers = ["el vacío", "vacio es el gancho", "misterio", "introspección", "la nada"]
+                for tweet in tweets:
+                    text = tweet.get("text", "").lower()
+                    for marker in hallucination_markers:
+                        if marker in text:
+                            errors.append(f"HALLUCINATION DETECTED: Tweet contains '{marker}'")
+        
+        # Validate growth object
+        if "growth" not in data:
+            errors.append("Missing 'growth' object")
+        
+        if errors:
+            log_test(test_name, False, "; ".join(errors), response_time)
+        else:
+            log_test(test_name, True, 
+                    f"All validations passed. evidence.evidenceSufficient=true, usableFacts present, OCR extracted text, 3 tweets, NO hallucinations",
+                    response_time)
+    
     except Exception as e:
-        print(f"\n❌ TEST 3 FAILED with exception: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False
+        log_test(test_name, False, f"Exception: {str(e)}")
 
-def test_4_validation():
-    """TEST 4 - VALIDATION"""
-    print("\n" + "="*80)
-    print("TEST 4 - VALIDATION")
-    print("="*80)
+def test_text_template():
+    """TEST 4: POST /api/text-template - all 3 formats"""
+    formats = [
+        ("thread", "Productividad con IA"),
+        ("controversy", "SaaS"),
+        ("myth", "Finanzas")
+    ]
+    
+    for format_type, topic in formats:
+        test_name = f"POST /api/text-template (format={format_type}, topic={topic})"
+        
+        try:
+            payload = {
+                "format": format_type,
+                "topic": topic
+            }
+            
+            start_time = time.time()
+            response = requests.post(f"{BASE_URL}/text-template", json=payload, timeout=150)
+            response_time = time.time() - start_time
+            
+            if response.status_code != 200:
+                log_test(test_name, False, 
+                        f"HTTP {response.status_code}: {response.text[:200]}", 
+                        response_time)
+                continue
+            
+            data = response.json()
+            errors = []
+            
+            # Validate analysis.generatedTweets
+            if "analysis" not in data or "generatedTweets" not in data["analysis"]:
+                errors.append("Missing 'analysis.generatedTweets'")
+            else:
+                tweets = data["analysis"]["generatedTweets"]
+                if len(tweets) != 3:
+                    errors.append(f"Expected EXACTLY 3 generatedTweets, got {len(tweets)}")
+                else:
+                    # Check each tweet has score fields
+                    required_fields = ["hookStrength", "retention", "weakPoint"]
+                    for i, tweet in enumerate(tweets):
+                        for field in required_fields:
+                            if field not in tweet:
+                                errors.append(f"Tweet {i+1} missing '{field}'")
+            
+            if errors:
+                log_test(test_name, False, "; ".join(errors), response_time)
+            else:
+                log_test(test_name, True, 
+                        f"All validations passed. 3 tweets with all score fields",
+                        response_time)
+        
+        except Exception as e:
+            log_test(test_name, False, f"Exception: {str(e)}")
+
+def test_rewrite():
+    """TEST 5: POST /api/rewrite"""
+    test_name = "POST /api/rewrite"
     
     try:
-        # POST to /api/vision-generate with empty body
-        print("POSTing to /api/vision-generate with empty body {}...")
-        response = requests.post(
-            f"{BASE_URL}/vision-generate",
-            json={},
-            timeout=30
-        )
+        payload = {
+            "text": "La IA va a cambiar tu vida.",
+            "weakPoint": "Gancho genérico",
+            "style": "Directo"
+        }
         
-        print(f"HTTP Status: {response.status_code}")
-        if response.status_code != 400:
-            print(f"❌ FAILED - Expected HTTP 400, got {response.status_code}")
-            print(f"Response: {response.text[:500]}")
-            return False
-        print("✓ HTTP 400 Bad Request")
+        start_time = time.time()
+        response = requests.post(f"{BASE_URL}/rewrite", json=payload, timeout=150)
+        response_time = time.time() - start_time
+        
+        if response.status_code != 200:
+            log_test(test_name, False, 
+                    f"HTTP {response.status_code}: {response.text[:200]}", 
+                    response_time)
+            return
         
         data = response.json()
-        error = data.get('error', '')
-        print(f"Error message: {error}")
+        errors = []
         
-        if error:
-            print("✓ Error message present")
+        # Validate required fields
+        required_fields = ["text", "rationale", "hookStrength", "retention", "weakPoint", "metrics"]
+        for field in required_fields:
+            if field not in data:
+                errors.append(f"Missing '{field}'")
+        
+        if errors:
+            log_test(test_name, False, "; ".join(errors), response_time)
         else:
-            print("⚠️ WARNING - No error message in response")
-        
-        print("\n" + "="*80)
-        print("✅ TEST 4 PASSED - Validation working correctly")
-        print("="*80)
-        return True
-        
+            log_test(test_name, True, 
+                    f"All validations passed. text/rationale/hookStrength/retention/weakPoint/metrics present",
+                    response_time)
+    
     except Exception as e:
-        print(f"\n❌ TEST 4 FAILED with exception: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False
+        log_test(test_name, False, f"Exception: {str(e)}")
 
-def main():
-    print("\n" + "="*80)
-    print("FORENSIC MULTIMODAL ENGINE - ANTI-HALLUCINATION TEST SUITE")
-    print("="*80)
-    print(f"Backend URL: {BASE_URL}")
-    print("="*80)
+def test_schedule():
+    """TEST 6: POST /api/schedule + GET /api/schedule"""
     
-    results = {}
-    
-    # Run all tests
-    results['TEST 1 - BLACK IMAGE (CRITICAL)'] = test_1_black_image()
-    results['TEST 2 - IMAGE WITH EVIDENCE'] = test_2_image_with_evidence()
-    results['TEST 3 - MULTIPLE FRAMES'] = test_3_multiple_frames()
-    results['TEST 4 - VALIDATION'] = test_4_validation()
-    
-    # Summary
-    print("\n" + "="*80)
-    print("TEST SUMMARY")
-    print("="*80)
-    
-    passed = 0
-    failed = 0
-    for test_name, result in results.items():
-        status = "✅ PASSED" if result else "❌ FAILED"
-        print(f"{test_name}: {status}")
-        if result:
-            passed += 1
+    # POST test
+    test_name = "POST /api/schedule"
+    try:
+        payload = {
+            "text": "Tweet de prueba",
+            "style": "Directo"
+        }
+        
+        start_time = time.time()
+        response = requests.post(f"{BASE_URL}/schedule", json=payload, timeout=30)
+        response_time = time.time() - start_time
+        
+        if response.status_code != 200:
+            log_test(test_name, False, 
+                    f"HTTP {response.status_code}: {response.text[:200]}", 
+                    response_time)
         else:
-            failed += 1
+            data = response.json()
+            errors = []
+            
+            if "draft" not in data:
+                errors.append("Missing 'draft' object")
+            if "count" not in data:
+                errors.append("Missing 'count' field")
+            
+            if errors:
+                log_test(test_name, False, "; ".join(errors), response_time)
+            else:
+                log_test(test_name, True, 
+                        f"draft and count present",
+                        response_time)
     
-    print("="*80)
-    print(f"TOTAL: {passed} passed, {failed} failed out of {len(results)} tests")
+    except Exception as e:
+        log_test(test_name, False, f"Exception: {str(e)}")
+    
+    # GET test
+    test_name = "GET /api/schedule"
+    try:
+        start_time = time.time()
+        response = requests.get(f"{BASE_URL}/schedule", timeout=30)
+        response_time = time.time() - start_time
+        
+        if response.status_code != 200:
+            log_test(test_name, False, 
+                    f"HTTP {response.status_code}: {response.text[:200]}", 
+                    response_time)
+        else:
+            data = response.json()
+            errors = []
+            
+            if "items" not in data:
+                errors.append("Missing 'items' array")
+            if "count" not in data:
+                errors.append("Missing 'count' field")
+            
+            if errors:
+                log_test(test_name, False, "; ".join(errors), response_time)
+            else:
+                log_test(test_name, True, 
+                        f"items array and count present",
+                        response_time)
+    
+    except Exception as e:
+        log_test(test_name, False, f"Exception: {str(e)}")
+
+def test_alerts():
+    """TEST 7: GET /api/alerts"""
+    test_name = "GET /api/alerts?topic=Inteligencia Artificial"
+    
+    try:
+        start_time = time.time()
+        response = requests.get(f"{BASE_URL}/alerts?topic=Inteligencia%20Artificial", timeout=30)
+        response_time = time.time() - start_time
+        
+        if response.status_code != 200:
+            log_test(test_name, False, 
+                    f"HTTP {response.status_code}: {response.text[:200]}", 
+                    response_time)
+            return
+        
+        data = response.json()
+        errors = []
+        
+        if "alerts" not in data:
+            errors.append("Missing 'alerts' array")
+        else:
+            alerts = data["alerts"]
+            if len(alerts) != 2:
+                errors.append(f"Expected 2 alerts (trend + performance), got {len(alerts)}")
+            else:
+                types = [a.get("type") for a in alerts]
+                if "trend" not in types:
+                    errors.append("Missing 'trend' type alert")
+                if "performance" not in types:
+                    errors.append("Missing 'performance' type alert")
+        
+        if errors:
+            log_test(test_name, False, "; ".join(errors), response_time)
+        else:
+            log_test(test_name, True, 
+                    f"2 alerts present (trend + performance)",
+                    response_time)
+    
+    except Exception as e:
+        log_test(test_name, False, f"Exception: {str(e)}")
+
+def test_metrics():
+    """TEST 8: GET /api/metrics"""
+    test_name = "GET /api/metrics"
+    
+    try:
+        start_time = time.time()
+        response = requests.get(f"{BASE_URL}/metrics", timeout=30)
+        response_time = time.time() - start_time
+        
+        if response.status_code != 200:
+            log_test(test_name, False, 
+                    f"HTTP {response.status_code}: {response.text[:200]}", 
+                    response_time)
+            return
+        
+        data = response.json()
+        errors = []
+        
+        required_fields = ["posts", "diagnostics", "hours_saved"]
+        for field in required_fields:
+            if field not in data:
+                errors.append(f"Missing '{field}'")
+            elif not isinstance(data[field], (int, float)):
+                errors.append(f"'{field}' must be a number, got {type(data[field])}")
+        
+        if errors:
+            log_test(test_name, False, "; ".join(errors), response_time)
+        else:
+            log_test(test_name, True, 
+                    f"posts/diagnostics/hours_saved present (all numbers)",
+                    response_time)
+    
+    except Exception as e:
+        log_test(test_name, False, f"Exception: {str(e)}")
+
+def test_history():
+    """TEST 9: GET /api/history"""
+    test_name = "GET /api/history"
+    
+    try:
+        start_time = time.time()
+        response = requests.get(f"{BASE_URL}/history", timeout=30)
+        response_time = time.time() - start_time
+        
+        if response.status_code != 200:
+            log_test(test_name, False, 
+                    f"HTTP {response.status_code}: {response.text[:200]}", 
+                    response_time)
+            return
+        
+        data = response.json()
+        errors = []
+        
+        if not isinstance(data, list):
+            errors.append(f"Expected array, got {type(data)}")
+        
+        if errors:
+            log_test(test_name, False, "; ".join(errors), response_time)
+        else:
+            log_test(test_name, True, 
+                    f"Returns array with {len(data)} items",
+                    response_time)
+    
+    except Exception as e:
+        log_test(test_name, False, f"Exception: {str(e)}")
+
+def test_validations():
+    """TEST 10: Validation tests (400 errors)"""
+    
+    # Test 1: Invalid type
+    test_name = "VALIDATION: POST /api/analyze-and-generate (invalid type)"
+    try:
+        payload = {"type": "invalid", "query": "x"}
+        response = requests.post(f"{BASE_URL}/analyze-and-generate", json=payload, timeout=30)
+        
+        if response.status_code == 400:
+            log_test(test_name, True, f"Correctly returns HTTP 400")
+        else:
+            log_test(test_name, False, f"Expected HTTP 400, got {response.status_code}")
+    except Exception as e:
+        log_test(test_name, False, f"Exception: {str(e)}")
+    
+    # Test 2: Missing query
+    test_name = "VALIDATION: POST /api/analyze-and-generate (missing query)"
+    try:
+        payload = {"type": "user"}
+        response = requests.post(f"{BASE_URL}/analyze-and-generate", json=payload, timeout=30)
+        
+        if response.status_code == 400:
+            log_test(test_name, True, f"Correctly returns HTTP 400")
+        else:
+            log_test(test_name, False, f"Expected HTTP 400, got {response.status_code}")
+    except Exception as e:
+        log_test(test_name, False, f"Exception: {str(e)}")
+    
+    # Test 3: POST /api/vision-generate empty body
+    test_name = "VALIDATION: POST /api/vision-generate (empty body)"
+    try:
+        payload = {}
+        response = requests.post(f"{BASE_URL}/vision-generate", json=payload, timeout=30)
+        
+        if response.status_code == 400:
+            log_test(test_name, True, f"Correctly returns HTTP 400")
+        else:
+            log_test(test_name, False, f"Expected HTTP 400, got {response.status_code}")
+    except Exception as e:
+        log_test(test_name, False, f"Exception: {str(e)}")
+    
+    # Test 4: POST /api/schedule empty body
+    test_name = "VALIDATION: POST /api/schedule (empty body)"
+    try:
+        payload = {}
+        response = requests.post(f"{BASE_URL}/schedule", json=payload, timeout=30)
+        
+        if response.status_code == 400:
+            log_test(test_name, True, f"Correctly returns HTTP 400")
+        else:
+            log_test(test_name, False, f"Expected HTTP 400, got {response.status_code}")
+    except Exception as e:
+        log_test(test_name, False, f"Exception: {str(e)}")
+
+def print_summary():
+    """Print final summary table"""
+    print("\n" + "="*80)
+    print("FINAL SUMMARY - ZMETA-AI / ViralForge Backend Verification")
     print("="*80)
     
-    if failed == 0:
-        print("\n🎉 ALL TESTS PASSED - Anti-hallucination bug fix VERIFIED")
-        return 0
-    else:
-        print(f"\n⚠️ {failed} TEST(S) FAILED - Anti-hallucination bug fix needs attention")
-        return 1
+    passed = sum(1 for r in test_results if r["passed"])
+    failed = sum(1 for r in test_results if not r["passed"])
+    
+    print(f"\nTotal Tests: {len(test_results)}")
+    print(f"✅ Passed: {passed}")
+    print(f"❌ Failed: {failed}")
+    print("\n" + "-"*80)
+    print(f"{'TEST NAME':<60} {'STATUS':<10} {'TIME':<10}")
+    print("-"*80)
+    
+    for result in test_results:
+        time_str = f"{result['response_time']:.2f}s" if result['response_time'] else "N/A"
+        status = "✅ PASS" if result["passed"] else "❌ FAIL"
+        print(f"{result['test']:<60} {status:<10} {time_str:<10}")
+    
+    print("-"*80)
+    
+    # Print failed tests details
+    if failed > 0:
+        print("\n" + "="*80)
+        print("FAILED TESTS DETAILS")
+        print("="*80)
+        for result in test_results:
+            if not result["passed"]:
+                print(f"\n❌ {result['test']}")
+                print(f"   {result['details']}")
+    
+    print("\n" + "="*80)
 
 if __name__ == "__main__":
-    exit(main())
+    print("="*80)
+    print("ZMETA-AI / ViralForge Backend - FULL END-TO-END VERIFICATION")
+    print("="*80)
+    print(f"Base URL: {BASE_URL}")
+    print("="*80)
+    print()
+    
+    # Run all tests
+    print("Running tests...\n")
+    
+    test_analyze_user_mode()
+    test_analyze_topic_mode()
+    test_vision_generate()
+    test_text_template()
+    test_rewrite()
+    test_schedule()
+    test_alerts()
+    test_metrics()
+    test_history()
+    test_validations()
+    
+    # Print summary
+    print_summary()
