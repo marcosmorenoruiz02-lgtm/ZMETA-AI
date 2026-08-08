@@ -14,16 +14,26 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetDescription } from '@/components/ui/sheet'
 import SocialPreview from '@/components/social-preview'
 import MediaUploader from '@/components/media-uploader'
+import BookmarkMeter from '@/components/bookmark-meter'
+import { Textarea } from '@/components/ui/textarea'
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import {
   Sparkles, Search, User, Hash, Heart, Repeat2, MessageCircle, Eye, Copy, Check,
   Zap, TrendingUp, ExternalLink, Flame, BrainCircuit, BadgeCheck, Clock,
   AlertTriangle, Wand2, Loader2, Trophy, Radar, Sun, Moon, ImageIcon,
   ScanText, Smile, CalendarClock, Layers, Rocket, MessageSquareQuote, Lightbulb,
   History, Star, Download, RotateCcw, Activity, Cpu, Music, ListOrdered, Instagram,
+  PenLine, Link2, CornerDownRight, Bookmark, Boxes,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
 const SUGGESTED_TOPICS = ['Inteligencia Artificial', 'SaaS', 'Finanzas personales', 'Marketing digital', 'Productividad', 'Startups', 'Cripto']
+const SIM_CLUSTERS = [
+  { value: 'tech_ai', label: 'Tech & IA' },
+  { value: 'finance', label: 'Finanzas / Trading' },
+  { value: 'webdev', label: 'Desarrollo Web' },
+  { value: 'entertainment', label: 'Entretenimiento' },
+]
 const TEXT_FORMATS = [
   { key: 'thread', label: 'Thread Starter', desc: 'Inicio de hilo que engancha', icon: Layers },
   { key: 'controversy', label: 'Controversia', desc: 'Opinión polémica que genera debate', icon: MessageSquareQuote },
@@ -137,6 +147,13 @@ export default function App() {
   const [history, setHistory] = useState([])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historySearch, setHistorySearch] = useState('')
+  // FASE 1-4: Motor de Redacción "Bookmark-Bait"
+  const [composeText, setComposeText] = useState('')
+  const [cluster, setCluster] = useState('tech_ai')
+  const [composeReply, setComposeReply] = useState('')
+  const [bmScore, setBmScore] = useState(null)
+  const [bmLoading, setBmLoading] = useState(false)
+  const [composeScheduling, setComposeScheduling] = useState(false)
   const alertShownRef = useRef(false)
 
   useEffect(() => {
@@ -260,6 +277,43 @@ export default function App() {
     } catch (e) { toast.error('Error al programar') } finally { setScheduling(null) }
   }
 
+  // FASE 1: Bookmark score en tiempo real (debounced, motor heurístico backend, 0 créditos)
+  useEffect(() => {
+    if (mode !== 'compose') return
+    if (!composeText.trim()) { setBmScore(null); setBmLoading(false); return }
+    setBmLoading(true)
+    const id = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/bookmark-score', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: composeText, cluster, hasThread: composeText.length > 280, firstReply: composeReply }) })
+        const j = await res.json(); if (res.ok) setBmScore(j)
+      } catch (e) {} finally { setBmLoading(false) }
+    }, 450)
+    return () => clearTimeout(id)
+  }, [composeText, cluster, composeReply, mode])
+
+  // FASE 2: aislamiento de links (mover al First-Reply)
+  const composeUrls = composeText.match(/https?:\/\/[^\s]+/gi) || []
+  const moveLinkToReply = () => {
+    const url = composeUrls[0]; if (!url) return
+    setComposeText((prev) => prev.replace(url, '').replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim())
+    setComposeReply((prev) => (prev ? prev + '\n' : '') + url)
+    toast.success('Link movido a First-Reply')
+  }
+  const clearReply = () => setComposeReply('')
+
+  // FASE 4: programar respetando el chequeo de CTA
+  const scheduleCompose = async () => {
+    if (!composeText.trim()) { toast.error('Escribe tu post primero'); return }
+    setComposeScheduling(true)
+    try {
+      const res = await fetch('/api/schedule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: composeText, style: SIM_CLUSTERS.find((c) => c.value === cluster)?.label || cluster }) })
+      const json = await res.json()
+      if (!res.ok) { toast.error(json?.error || 'No se pudo programar'); return }
+      setScheduledCount(json.count || 0); successToast('Post programado', 'Añadido a tu cola de borradores')
+    } catch (e) { toast.error('Error al programar') } finally { setComposeScheduling(false) }
+  }
+
+
   // History drawer actions
   const reloadRun = (item) => { setHistoryOpen(false); applyResult(item.result, null, true) }
   const togglePin = (hash) => { setHistory((prev) => { const next = sortHistory(prev.map((h) => h.hash === hash ? { ...h, pinned: !h.pinned } : h)); persistHistory(next); return next }) }
@@ -363,10 +417,11 @@ export default function App() {
               </div>
 
               <Tabs value={mode} onValueChange={setMode} className="w-full">
-                <TabsList className="grid grid-cols-3 w-full mb-4">
+                <TabsList className="grid grid-cols-4 w-full mb-4">
                   <TabsTrigger value="user" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground text-xs"><User className="h-3.5 w-3.5 mr-1" /> Usuario</TabsTrigger>
                   <TabsTrigger value="topic" className="data-[state=active]:bg-accent data-[state=active]:text-accent-foreground text-xs"><Hash className="h-3.5 w-3.5 mr-1" /> Temática</TabsTrigger>
                   <TabsTrigger value="media" className="data-[state=active]:bg-cyan-600 data-[state=active]:text-black text-xs"><ImageIcon className="h-3.5 w-3.5 mr-1" /> Media</TabsTrigger>
+                  <TabsTrigger value="compose" className="data-[state=active]:bg-fuchsia-600 data-[state=active]:text-white text-xs"><PenLine className="h-3.5 w-3.5 mr-1" /> Redactar</TabsTrigger>
                 </TabsList>
                 <TabsContent value="user" className="mt-0 space-y-3">
                   <Input value={userQuery} onChange={(e) => setUserQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runAnalysis()} placeholder="@usuario" className="bg-background/50 h-11" />
@@ -398,6 +453,66 @@ export default function App() {
                   </div>
                   <div className="flex items-center gap-2 text-[11px] text-muted-foreground"><div className="flex-1 h-px bg-border" /> o sube un archivo <div className="flex-1 h-px bg-border" /></div>
                   <MediaUploader onGenerate={runVision} loading={loading} />
+                </TabsContent>
+
+                <TabsContent value="compose" className="mt-0 space-y-3">
+                  {/* FASE 3: Selector de Nicho SimCluster */}
+                  <div>
+                    <label className="mb-1.5 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground font-mono"><Boxes className="h-3.5 w-3.5 text-fuchsia-400" /> SimCluster (nicho algorítmico)</label>
+                    <Select value={cluster} onValueChange={setCluster}>
+                      <SelectTrigger className="h-10 bg-background/50"><SelectValue placeholder="Elige un clúster" /></SelectTrigger>
+                      <SelectContent>{SIM_CLUSTERS.map((c) => (<SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>))}</SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Compositor principal */}
+                  <div>
+                    <Textarea value={composeText} onChange={(e) => setComposeText(e.target.value)} placeholder="Escribe tu post... la IA puntúa su potencial de guardado en tiempo real." rows={6} className="bg-background/50 resize-none text-[15px]" />
+                    <div className={`mt-1 text-right text-[11px] ${composeText.length > 280 ? 'text-amber-400' : 'text-muted-foreground'}`}>{composeText.length}/280 {composeText.length > 280 && '· conviértelo en hilo'}</div>
+                  </div>
+
+                  {/* FASE 2: aislamiento de link */}
+                  {composeUrls.length > 0 && (
+                    <Alert className="border-cyan-500/30 bg-cyan-500/5 py-2.5">
+                      <Link2 className="h-4 w-4 text-cyan-400" />
+                      <AlertTitle className="text-cyan-400 text-xs">Link externo detectado</AlertTitle>
+                      <AlertDescription className="text-cyan-500/80 text-xs">
+                        X suprime el alcance de posts con links. Muévelo a la primera respuesta.
+                        <Button size="sm" onClick={moveLinkToReply} className="mt-2 w-full bg-cyan-600 hover:bg-cyan-500 text-black"><CornerDownRight className="h-4 w-4 mr-1.5" /> Mover link a First-Reply</Button>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  {composeReply && (
+                    <div className="flex items-center justify-between rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-xs">
+                      <span className="inline-flex items-center gap-1.5 text-primary truncate"><CornerDownRight className="h-3.5 w-3.5 shrink-0" /> First-Reply listo</span>
+                      <button onClick={clearReply} className="text-muted-foreground hover:text-foreground shrink-0">Deshacer</button>
+                    </div>
+                  )}
+
+                  {/* FASE 1: Bookmark Score en tiempo real */}
+                  <BookmarkMeter data={bmScore} loading={bmLoading} />
+
+                  {/* FASE 4: chequeo de CTA (Early-Velocity) */}
+                  {composeText.trim() && bmScore && !bmScore?.cta?.present && (
+                    <Alert className="border-amber-500/30 bg-amber-500/5 py-2.5">
+                      <AlertTriangle className="h-4 w-4 text-amber-400" />
+                      <AlertTitle className="text-amber-500 text-xs">Sin CTA / gancho de comentarios</AlertTitle>
+                      <AlertDescription className="text-amber-500/80 text-xs">Falta una pregunta abierta o incentivo para disparar respuestas en los primeros 30 min (early-velocity). Sugerencia: <span className="text-foreground/90">{bmScore?.cta?.suggestion}</span></AlertDescription>
+                    </Alert>
+                  )}
+
+                  {/* Preview con First-Reply */}
+                  {composeText.trim() && (
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1.5 font-mono">// Preview X {composeReply && '· Hilo'}</div>
+                      <SocialPreview name="Z.META" handle={myHandle} text={composeText} firstReply={composeReply} />
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="secondary" onClick={scheduleCompose} disabled={composeScheduling || !composeText.trim()} className="flex-1 glow-primary">{composeScheduling ? (<><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> ...</>) : (<><CalendarClock className="h-4 w-4 mr-1.5" /> Programar</>)}</Button>
+                    <CopyButton text={composeReply ? `${composeText}\n\n↳ ${composeReply}` : composeText} />
+                  </div>
                 </TabsContent>
               </Tabs>
             </CardContent>

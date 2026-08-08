@@ -19,6 +19,7 @@ export default function SocialPreview({
   verified = true,
   text = '',
   media = null,
+  firstReply = '',
   stats = { replies: 128, retweets: 342, likes: 2870, views: 84200 },
 }) {
   const cleanHandle = handle.replace('@', '')
@@ -60,6 +61,30 @@ export default function SocialPreview({
           </div>
         </div>
       </div>
+
+      {firstReply ? (
+        <div className="mt-1 flex gap-3">
+          {/* conector de hilo */}
+          <div className="flex w-11 flex-col items-center">
+            <div className="w-0.5 flex-1 bg-zinc-800" />
+            <Avatar className="h-11 w-11 shrink-0">
+              <AvatarImage src={avatar} />
+              <AvatarFallback className="bg-indigo-600 text-sm">{(name?.[0] || 'Z').toUpperCase()}</AvatarFallback>
+            </Avatar>
+          </div>
+          <div className="min-w-0 flex-1 pb-1">
+            <div className="flex items-center gap-1 text-[15px] leading-tight">
+              <span className="font-bold text-white truncate">{name}</span>
+              {verified && <BadgeCheck className="h-[18px] w-[18px] text-sky-400 shrink-0" />}
+              <span className="text-zinc-500 truncate">@{cleanHandle}</span>
+              <span className="text-zinc-500">·</span>
+              <span className="text-zinc-500">ahora</span>
+            </div>
+            <p className="text-[13px] text-zinc-500">Respondiendo a <span className="text-sky-400">@{cleanHandle}</span></p>
+            <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-100">{firstReply}</p>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
