@@ -164,15 +164,21 @@ async function twitterGet(path, params) {
 
 async function getUserData(userName) {
   const clean = userName.replace('@', '').trim()
-  // 1) Motor top-performing: advanced_search from:usuario (queryType Top)
-  const [infoRes, topRes] = await Promise.all([
+  // FASE 4: muestra ESTRATIFICADA => Top (alto rendimiento) + Latest (recientes/representativos)
+  const [infoRes, topRes, latestRes] = await Promise.all([
     twitterGet('/twitter/user/info', { userName: clean }),
     twitterGet('/twitter/tweet/advanced_search', { query: `from:${clean}`, queryType: 'Top' }).catch(() => ({ tweets: [] })),
+    twitterGet('/twitter/tweet/advanced_search', { query: `from:${clean}`, queryType: 'Latest' }).catch(() => ({ tweets: [] })),
   ])
   const info = infoRes?.data || {}
   const authorFallback = { name: info?.name, userName: info?.userName, profilePicture: info?.profilePicture }
-  let raw = (topRes?.tweets || []).filter((t) => t?.text && !t?.isReply)
-  // 2) Fallback a last_tweets si advanced_search no devuelve resultados
+  const top = (topRes?.tweets || []).filter((t) => t?.text && !t?.isReply)
+  const latest = (latestRes?.tweets || []).filter((t) => t?.text && !t?.isReply)
+  // combinar y deduplicar por id (top primero para no perder los de alto rendimiento)
+  const seen = new Set()
+  let raw = []
+  for (const t of [...top, ...latest]) { const id = t?.id || t?.url; if (id && !seen.has(id)) { seen.add(id); raw.push(t) } }
+  // fallback a last_tweets si no hay nada
   if (raw.length === 0) {
     const tweetsRes = await twitterGet('/twitter/user/last_tweets', { userName: clean }).catch(() => ({}))
     raw = (tweetsRes?.data?.tweets || []).filter((t) => t?.text && !t?.isReply)
@@ -289,7 +295,7 @@ Responde ÚNICAMENTE con ese JSON.`
 
 async function computePersonality(mode, query, tweets) {
   const imgs = []
-  for (const t of tweets) { for (const m of t.media || []) { if (m.url && imgs.length < 4) imgs.push(m.url) } }
+  for (const t of tweets) { for (const m of t.media || []) { const u = m.thumbnail || m.url; if (u && imgs.length < 5) imgs.push(u) } }
   const content = [{ type: 'text', text: buildPersonalityPrompt(mode, query, tweets) }]
   for (const u of imgs) content.push({ type: 'image_url', image_url: { url: u } })
   try { return await rawGeminiJSON([{ role: 'system', content: SYSTEM }, { role: 'user', content }], 0.4) } catch (e) { return null }
@@ -706,6 +712,96 @@ function buildPerformanceReport(rec, items, distribution) {
 }
 
 
+// ---- FASE 6: Viral DNA Engine (determinista, asociación no causalidad) ----
+function tweetFeatures(t) {
+  const text = t.text || ''
+  const first = text.split('\n')[0] || ''
+  return {
+    hasVideo: (t.media || []).some((m) => m.type === 'video' || m.videoUrl),
+    hasImage: (t.media || []).some((m) => m.type === 'photo' || (m.type && m.type.includes('photo'))),
+    hasMedia: (t.media || []).length > 0,
+    isList: /(^|\n)\s*(\d+[\.\)]|[-•*→✅])/m.test(text),
+    startsQuestion: /^[¿?]/.test(first.trim()) || first.includes('?'),
+    shortHook: first.trim().length <= 60,
+    hasNumber: /\d/.test(first),
+    hasEmoji: /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(text),
+    lenBand: text.length <= 120 ? 'corto' : text.length <= 240 ? 'medio' : 'largo',
+  }
+}
+
+const DNA_LABELS = {
+  hasVideo: 'Uso de vídeo', hasImage: 'Uso de imagen', isList: 'Formato lista/pasos',
+  startsQuestion: 'Apertura con pregunta', shortHook: 'Gancho corto (1ª línea)',
+  hasNumber: 'Cifra en el gancho', hasEmoji: 'Uso de emojis',
+}
+
+function computeViralDNA(tweets) {
+  const valid = (tweets || []).filter((t) => t.text)
+  if (valid.length < 4) return { available: false, reason: 'Muestra insuficiente para extraer patrones fiables (mín. 4).', patterns: [], sampleSize: valid.length }
+  const scored = valid.map((t) => ({ t, s: engagementScore(t), f: tweetFeatures(t) }))
+  scored.sort((a, b) => b.s - a.s)
+  const cut = Math.max(1, Math.round(scored.length / 3))
+  const high = scored.slice(0, cut)
+  const rest = scored.slice(cut)
+  const rate = (arr, key) => arr.length ? arr.filter((x) => x.f[key]).length / arr.length : 0
+  const patterns = []
+  for (const key of Object.keys(DNA_LABELS)) {
+    const hi = rate(high, key), lo = rate(rest, key)
+    const lift = +(hi - lo).toFixed(2)
+    const evidenceCount = high.filter((x) => x.f[key]).length
+    if (hi >= 0.4 && lift >= 0.15) {
+      const avgPerf = Math.round(avg(high.filter((x) => x.f[key]).map((x) => x.s)))
+      const confidence = +Math.min(0.85, 0.3 + lift + Math.min(0.2, evidenceCount * 0.05)).toFixed(2)
+      patterns.push({
+        patternType: key,
+        description: `${DNA_LABELS[key]} APARECE ASOCIADO con tus posts de mayor rendimiento (${Math.round(hi * 100)}% de los top vs ${Math.round(lo * 100)}% del resto).`,
+        presenceInTop: Math.round(hi * 100),
+        presenceInRest: Math.round(lo * 100),
+        lift,
+        evidenceCount,
+        averagePerformance: avgPerf,
+        confidence,
+      })
+    }
+  }
+  patterns.sort((a, b) => b.lift - a.lift)
+  // banda de longitud dominante en top
+  const bandCounts = {}
+  high.forEach((x) => { bandCounts[x.f.lenBand] = (bandCounts[x.f.lenBand] || 0) + 1 })
+  const dominantBand = Object.entries(bandCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'medio'
+  return {
+    available: true,
+    sampleSize: valid.length,
+    topSize: high.length,
+    dominantLength: dominantBand,
+    patterns,
+    disclaimer: 'Los patrones indican ASOCIACIÓN estadística con el rendimiento en TU cuenta, no causalidad.',
+  }
+}
+
+// FASE 7: Viral Potential Score determinista (alineación con el Viral DNA del autor)
+function computeViralPotential(tweetText, viralDNA) {
+  const t = tweetFeatures({ text: tweetText || '', media: [] })
+  let score = 45
+  const used = []
+  if (viralDNA?.available && viralDNA.patterns?.length) {
+    for (const p of viralDNA.patterns) {
+      if (t[p.patternType]) { score += Math.round(p.lift * 40) + 5; used.push(DNA_LABELS[p.patternType]) }
+    }
+  } else {
+    // heurística genérica si no hay ADN
+    if (t.isList) score += 10
+    if (t.shortHook) score += 8
+    if (t.startsQuestion) score += 6
+    if (t.hasNumber) score += 6
+  }
+  const first = (tweetText || '').split('\n')[0] || ''
+  if (first.trim().length > 0 && first.trim().length <= 70) score += 5
+  if ((tweetText || '').length > 280) score -= 6
+  return { viralPotentialScore: clamp(score), patternUsed: used }
+}
+
+
 // ----------------------------- Routes -----------------------------
 async function handleRoute(request, { params }) {
   const { path = [] } = await params
@@ -764,9 +860,11 @@ async function handleRoute(request, { params }) {
         originalTweets = await getTopicData(query, minFaves)
       }
 
-      originalTweets = originalTweets.sort((a, b) => engagementScore(b) - engagementScore(a)).slice(0, 10)
+      // FASE 4: muestra estratificada completa (para personalidad + Viral DNA), top-10 para generación
+      const sample = originalTweets.sort((a, b) => engagementScore(b) - engagementScore(a)).slice(0, 25)
+      originalTweets = sample.slice(0, 10)
 
-      if (originalTweets.length === 0) {
+      if (sample.length === 0) {
         return handleCORS(
           NextResponse.json(
             {
@@ -780,8 +878,8 @@ async function handleRoute(request, { params }) {
         )
       }
 
-      // MEJORA 1: construir la personalidad digital ANTES de generar
-      const personality = await computePersonality(type, query, originalTweets)
+      // MEJORA 1: construir la personalidad digital ANTES de generar (muestra estratificada, cap 18)
+      const personality = await computePersonality(type, query, sample.slice(0, 18))
 
       // MEJORA 2/8/9: generar en la voz del autor con autoevaluación de fidelidad inline
       // (voiceScore lo reporta el mismo modelo => 2 llamadas Gemini en total, dentro del timeout del proxy)
@@ -799,10 +897,47 @@ async function handleRoute(request, { params }) {
         })
       }
 
+      // FASE 6: Viral DNA de la cuenta (determinista, muestra amplia)
+      const viralDNA = computeViralDNA(sample)
+
+      // FASE 7: Viral Potential + patrón/enfoque por tweet generado (determinista)
+      if (analysis?.generatedTweets) {
+        analysis.generatedTweets = analysis.generatedTweets.map((t) => {
+          const full = (t.thread && t.thread.length ? t.thread.join('\n') : t.text) || ''
+          const vp = computeViralPotential(full, viralDNA)
+          const approach = vp.patternUsed.length
+            ? `Aplica patrones asociados a tu alto rendimiento: ${vp.patternUsed.join(', ')}.`
+            : 'Enfoque general de gancho + valor (sin ADN viral suficiente todavía).'
+          return { ...t, viralPotentialScore: vp.viralPotentialScore, patternUsed: vp.patternUsed, approach }
+        })
+      }
+
+      // FASE 4: Personalidad Digital versionada y persistente (solo modo user)
+      let personalityVersion = null
+      if (personality && type === 'user') {
+        const handle = query.replace('@', '').toLowerCase().trim()
+        const prev = await database.collection('digital_personality').find({ handle }).sort({ version: -1 }).limit(1).toArray()
+        const last = prev[0] || null
+        const version = (last?.version || 0) + 1
+        const doc = {
+          id: uuidv4(), handle, version,
+          sampleSize: sample.length,
+          mediaSampleSize: sample.filter((t) => (t.media || []).length).length,
+          weighting: { historical: 0.7, recent: 0.3 },
+          personality,
+          previousVersion: last?.version || null,
+          confidence: viralDNA.available ? 0.7 : 0.4,
+          createdAt: new Date(),
+        }
+        await database.collection('digital_personality').insertOne({ ...doc })
+        const { _id, personality: _p, ...meta } = doc
+        personalityVersion = meta
+      }
+
       const metrics = await bumpMetrics(database, 3, 1)
       const primeTimes = computePrimeTimes(originalTweets)
 
-      const result = { id: uuidv4(), mode: type, query, minFaves: type === 'topic' ? minFaves : null, userInfo, personality, originalTweets, analysis, growth: analysis?.growth || null, primeTimes, metrics, createdAt: new Date() }
+      const result = { id: uuidv4(), mode: type, query, minFaves: type === 'topic' ? minFaves : null, userInfo, personality, personalityVersion, viralDNA, originalTweets, analysis, growth: analysis?.growth || null, primeTimes, metrics, createdAt: new Date() }
       await database.collection('analyses').insertOne({ ...result })
       const { _id, ...clean } = result
       return handleCORS(NextResponse.json(clean))
@@ -972,6 +1107,40 @@ Devuelve ÚNICAMENTE un JSON con esta estructura EXACTA:
       await database.collection('scheduled').deleteOne({ id })
       const count = await database.collection('scheduled').countDocuments({ status: 'scheduled' })
       return handleCORS(NextResponse.json({ ok: true, count }))
+    }
+
+    // FASE 5+: extraer métricas PÚBLICAS de un tweet por URL (impresiones=views, likes, reposts, replies, quotes, bookmarks)
+    if (route === '/performance/from-url' && method === 'POST') {
+      const body = await request.json()
+      const rawUrl = (body?.url || '').trim()
+      const idMatch = rawUrl.match(/status(?:es)?\/(\d+)/) || rawUrl.match(/^(\d{5,25})$/)
+      const tweetId = idMatch ? idMatch[1] : null
+      if (!tweetId) return handleCORS(NextResponse.json({ error: 'URL de tweet no válida. Pega el enlace de la publicación (…/status/123…).' }, { status: 400 }))
+      let tw = null
+      try {
+        const res = await twitterGet('/twitter/tweets', { tweet_ids: tweetId })
+        tw = res?.tweets?.[0] || res?.data?.tweets?.[0] || res?.data?.[0] || null
+      } catch (e) {}
+      if (!tw) {
+        try { const res2 = await twitterGet('/twitter/tweet/advanced_search', { query: `url:${rawUrl}`, queryType: 'Latest' }); tw = res2?.tweets?.[0] || null } catch (e) {}
+      }
+      if (!tw) return handleCORS(NextResponse.json({ error: 'No se pudo obtener el tweet. ¿Es público y existe? Si el error persiste, introduce las métricas a mano.' }, { status: 422 }))
+      const n = normalizeTweet(tw)
+      return handleCORS(NextResponse.json({
+        ok: true,
+        prefill: {
+          impressions: n.views || 0,
+          likes: n.likes || 0,
+          reposts: n.retweets || 0,
+          replies: n.replies || 0,
+          quotes: n.quotes || 0,
+          bookmarks: n.bookmarks || 0,
+          text: n.text || '',
+        },
+        hasVideo: (n.media || []).some((m) => m.type === 'video' || m.videoUrl),
+        postId: tweetId,
+        note: 'Métricas públicas extraídas de X. Las impresiones equivalen a las visualizaciones públicas. Reproducciones de vídeo y retención son privadas: introdúcelas a mano si las tienes.',
+      }))
     }
 
     // FASE 5: Performance Data Engine

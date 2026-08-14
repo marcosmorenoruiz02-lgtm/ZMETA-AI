@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { toast } from 'sonner'
-import { Activity, TrendingUp, Loader2, Trash2, BarChart3, Eye, PlayCircle, Bookmark, AlertCircle, Info, Gauge } from 'lucide-react'
+import { Activity, TrendingUp, Loader2, Trash2, BarChart3, Eye, PlayCircle, Bookmark, AlertCircle, Info, Gauge, Link2, Download } from 'lucide-react'
 
 const CLS = {
   LOW: { label: 'Bajo rendimiento', cls: 'bg-rose-500/15 text-rose-400 border-rose-500/30' },
@@ -44,6 +44,8 @@ function Stat({ label, value, suffix = '' }) {
 export default function PerformancePanel({ onCountChange }) {
   const [form, setForm] = useState({})
   const [text, setText] = useState('')
+  const [url, setUrl] = useState('')
+  const [extracting, setExtracting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [items, setItems] = useState([])
   const [distribution, setDistribution] = useState(null)
@@ -59,6 +61,19 @@ export default function PerformancePanel({ onCountChange }) {
   useEffect(() => { load() }, [])
 
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }))
+
+  const extract = async () => {
+    if (!url.trim()) { toast.error('Pega la URL de la publicación'); return }
+    setExtracting(true)
+    try {
+      const res = await fetch('/api/performance/from-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) })
+      const j = await res.json()
+      if (!res.ok) { toast.error(j?.error || 'No se pudo extraer'); return }
+      setForm((p) => ({ ...p, ...j.prefill }))
+      if (j.prefill?.text) setText(j.prefill.text)
+      toast.success('Métricas públicas extraídas de X', { description: j.note })
+    } catch (e) { toast.error('Error al extraer de X') } finally { setExtracting(false) }
+  }
 
   const submit = async () => {
     if (!form.impressions || Number(form.impressions) <= 0) { toast.error('Las impresiones son obligatorias'); return }
@@ -89,6 +104,16 @@ export default function PerformancePanel({ onCountChange }) {
       <div className="rounded-2xl border border-border/60 bg-secondary/20 p-4">
         <div className="flex items-center gap-2 mb-1"><Activity className="h-4 w-4 text-primary" /><span className="text-sm font-semibold">Métricas reales de tu publicación</span></div>
         <p className="text-[11px] text-muted-foreground mb-3">Introduce las analíticas de X Analytics (privadas del autor). Los cálculos y la clasificación se hacen en el servidor.</p>
+        <div className="mb-3 rounded-lg border border-cyan-500/25 bg-cyan-500/5 p-2.5">
+          <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-cyan-400 mb-1.5"><Link2 className="h-3.5 w-3.5" /> Extraer de una URL de X (autocompleta lo público)</label>
+          <div className="flex gap-2">
+            <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://x.com/usuario/status/123..." className="h-9 bg-background/50 text-sm" />
+            <Button size="sm" onClick={extract} disabled={extracting} className="h-9 bg-cyan-600 hover:bg-cyan-500 text-black shrink-0">
+              {extracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Download className="h-4 w-4 mr-1" /> Extraer</>}
+            </Button>
+          </div>
+          <p className="mt-1.5 text-[10px] text-muted-foreground">Impresiones = visualizaciones públicas. Reproducciones de vídeo y retención son privadas → añádelas a mano si las tienes.</p>
+        </div>
         <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="Texto del post (opcional, para contexto)" className="mb-3 bg-background/50 h-9 text-sm" />
         <div className="grid grid-cols-2 gap-2">
           {FIELDS.map((f) => (

@@ -24,7 +24,7 @@ import {
   AlertTriangle, Wand2, Loader2, Trophy, Radar, Sun, Moon, ImageIcon,
   ScanText, Smile, CalendarClock, Layers, Rocket, MessageSquareQuote, Lightbulb,
   History, Star, Download, RotateCcw, Activity, Cpu, Music, ListOrdered, Instagram,
-  PenLine, Link2, CornerDownRight, Bookmark, Boxes, Trash2,
+  PenLine, Link2, CornerDownRight, Bookmark, Boxes, Trash2, Info,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -367,6 +367,7 @@ export default function App() {
   const growth = data?.growth || data?.analysis?.growth || null
   const primeTimes = data?.primeTimes || []
   const personality = data?.personality || null
+  const viralDNA = data?.viralDNA || null
   const PERSONALITY_LABELS = {
     tono_general: 'Tono', nivel_humor: 'Humor', nivel_ironia: 'Ironía', nivel_sarcasmo: 'Sarcasmo',
     nivel_critica: 'Crítica', nivel_emocional: 'Emocional', ritmo_escritura: 'Ritmo', uso_emojis: 'Emojis',
@@ -665,6 +666,24 @@ export default function App() {
             </CardContent></Card>
           )}
 
+          {viralDNA && viralDNA.available && !loading && (
+            <Card className="glass border-emerald-500/30"><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2 text-emerald-400"><Activity className="h-4 w-4" /> Viral DNA · patrones de tu alto rendimiento</CardTitle></CardHeader><CardContent className="pt-0 space-y-2.5">
+              {viralDNA.patterns?.length ? viralDNA.patterns.map((p, i) => (
+                <div key={i} className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2.5">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-sm font-medium text-foreground">{p.description.split(' APARECE')[0]}</span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Badge className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px]">Top {p.presenceInTop}% / Resto {p.presenceInRest}%</Badge>
+                      <span className="text-[10px] text-muted-foreground">conf {Math.round(p.confidence * 100)}%</span>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">{p.description} · {p.evidenceCount} evidencias</p>
+                </div>
+              )) : <p className="text-xs text-muted-foreground">Aún no hay patrones diferenciales claros. Analiza más contenido.</p>}
+              <p className="flex items-start gap-1.5 text-[10px] text-muted-foreground"><Info className="h-3 w-3 mt-0.5 shrink-0" /> {viralDNA.disclaimer}</p>
+            </CardContent></Card>
+          )}
+
           {analysis && !loading && (
             <Card className="glass border-primary/30"><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2 text-primary"><BrainCircuit className="h-4 w-4" /> Análisis de patrones</CardTitle></CardHeader><CardContent className="pt-0">
               <p className="text-sm text-foreground/90 leading-snug">{analysis.summary}</p>
@@ -711,8 +730,9 @@ export default function App() {
               <Card key={i} className={`glass-hover ring-1 ${meta.accent} ${hot ? 'ring-cyan-500/50 shadow-[0_0_24px_rgba(0,242,254,0.18)]' : ''}`}><CardContent className="p-4">
                 <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                   <div className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${meta.chip}`}><Icon className="h-3.5 w-3.5" /> {g.style}</div>
-                  <div className="flex items-center gap-2 flex-wrap">{typeof g.voiceScore === 'number' && <Badge className={`border ${g.voiceScore >= 90 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/15 text-amber-400 border-amber-500/30'}`}><User className="h-3 w-3 mr-1" /> Voz {g.voiceScore}%</Badge>}{isThread && <Badge className="bg-sky-500/15 text-sky-400 border border-sky-500/30"><ListOrdered className="h-3 w-3 mr-1" /> Hilo {g.thread.length}</Badge>}{hot && <Badge className="bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 animate-pulse">🔥 Alto potencial</Badge>}{g.rewritten && <Badge className="bg-accent/15 text-accent border border-accent/30">Reescrito ✨</Badge>}</div>
+                  <div className="flex items-center gap-2 flex-wrap">{typeof g.voiceScore === 'number' && <Badge className={`border ${g.voiceScore >= 90 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/15 text-amber-400 border-amber-500/30'}`}><User className="h-3 w-3 mr-1" /> Voz {g.voiceScore}%</Badge>}{typeof g.viralPotentialScore === 'number' && <Badge className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"><Activity className="h-3 w-3 mr-1" /> Potencial {g.viralPotentialScore}%</Badge>}{isThread && <Badge className="bg-sky-500/15 text-sky-400 border border-sky-500/30"><ListOrdered className="h-3 w-3 mr-1" /> Hilo {g.thread.length}</Badge>}{hot && <Badge className="bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 animate-pulse">🔥 Alto potencial</Badge>}{g.rewritten && <Badge className="bg-accent/15 text-accent border border-accent/30">Reescrito ✨</Badge>}</div>
                 </div>
+                {g.approach && <p className="mb-2 flex items-start gap-1.5 text-[11px] text-emerald-400/90"><Activity className="h-3 w-3 mt-0.5 shrink-0" /> {g.approach}</p>}
 
                 <div className="flex items-center gap-4 rounded-xl border border-border/60 bg-secondary/30 p-3 mb-3">
                   <RadialScore value={g.hookStrength || 0} />
