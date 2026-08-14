@@ -638,14 +638,14 @@ metadata:
 
 test_plan:
   current_focus:
-    - "CUSTOM NICHE + SCHEDULE MANAGEMENT"
+    - "FASE 1 X-media preservation + FASE 5 Performance Data Engine"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
     -agent: "main"
-    -message: "Cambios backend DETERMINISTAS (0 creditos LLM). VALIDAR: (1) POST /api/bookmark-score con cluster de NICHO LIBRE (ej cluster:'Fotografia de bodas') => 200, response.cluster refleja el string libre, cta.suggestion menciona el nicho. (2) CTA fix word-boundary: POST {text:'3 ejercicios:\n1. Sentadilla\n2. Peso muerto', cluster:'Fitness'} (contiene substring 'rt' en 'muerto') SIN '?' => cta.present=false. POST {text:'3 tips. ¿Cual usas tu?'} => cta.present=true type 'question'. (3) GET /api/schedule => {items[],count}. (4) POST /api/schedule {text,style} => {draft{id},count}. (5) DELETE /api/schedule?id=<id de un item existente> => {ok:true,count} y el item ya no aparece en GET. (6) DELETE /api/schedule sin id => 400. NO probar frontend."
+    -message: "FASE 5 (Performance Data Engine, DETERMINISTA 0 creditos LLM) + FASE 1 (conservar multimedia de X). VALIDAR PRIMERO lo barato (performance): (1) POST /api/performance {impressions:52149, interactions:1386, videoViews:36989, uniqueVideoViews:30384, retention:42, bookmarks:146, followers:2000, detailExpands:235, profileVisits:65} => 200; record.derived con engagementRate=2.66, videoViewRate=70.93, uniqueVideoViewRate=58.26, profileVisitRate, interactionPer1000Impressions, impressionsPerFollower=26.075; performanceScore numerico 0-100; classification en [LOW,NORMAL,ABOVE_AVERAGE,HIGH,OUTLIER]; report con observations[], comparison[], hypotheses[] (LENGUAJE DE ASOCIACION NO causalidad: buscar 'ASOCIAD' y disclaimer que menciona 'no causalidad'), confidence numerico. (2) POST /api/performance {impressions:0} => 400 (impresiones obligatorias>0). (3) GET /api/performance => {items[] ordenados por performanceScore desc, distribution{count,avgScore,avgEngagementRate,basis}}. (4) DELETE /api/performance?id=<id existente> => {ok:true} y desaparece del GET; DELETE sin id => 400. (5) Registrar >=5 posts con metricas variadas y confirmar que distribution.basis pasa a 'relative' y que hay variedad de classification. LUEGO FASE 1 (usa creditos Twitter+Gemini, 1 sola llamada): POST /api/analyze-and-generate {type:'user', query:'@MorrrMorrr63705'} => en originalTweets, si algun tweet tiene media, cada item de media[] debe conservar {type,url} y para videos {videoUrl/thumbnail/durationMs} cuando esten disponibles (verificar que 'media' NO se pierde). Si Twitter da 402, reportar como dependencia externa. NO frontend."
     -agent: "main"
     -message: "VERIFICACION INTEGRAL solicitada por el usuario: las funciones principales deben funcionar bien sin errores. Ejecuta prueba END-TO-END de TODOS los endpoints y reporta CUALQUIER error. (1) POST /api/analyze-and-generate user('@MorrrMorrr63705') y topic('Inteligencia Artificial',minFaves 100) => HTTP 200, personality, 3 generatedTweets con voiceScore/hookStrength/retention/weakPoint/thread/firstSelfReply, growth, primeTimes, metrics, originalTweets DESC; medir tiempo (<55s). (2) POST /api/vision-generate (imagen con texto real PIL) => HTTP 200, evidence.evidenceSufficient true, 3 tweets. (3) POST /api/text-template (thread/controversy/myth) => HTTP 200. (4) POST /api/rewrite => HTTP 200. (5) POST+GET /api/schedule => HTTP 200. (6) GET /api/alerts?topic=X => 2 alerts. (7) GET /api/metrics. (8) GET /api/history. (9) Validaciones 400. Si twitterapi.io da 402 (créditos), repórtalo como dependencia externa, NO bug. NO probar frontend. Claves en .env."
     -agent: "main"
@@ -677,3 +677,81 @@ agent_communication:
     -message: "BOOKMARK-BAIT ENGINE TESTING COMPLETED ✅ - All 8 tests PASSED (8/8). POST /api/bookmark-score is FULLY OPERATIONAL as a deterministic heuristic endpoint. KEY RESULTS: (1) Rich post test: HTTP 200 in 0.35s, score=82 (0-100 ✓), grade='high', breakdown with all 4 sub-scores (actionability:100, structure:72, specificity:90, saveability:65), cta.present=true (detected '?'), linkIsolation.hasExternalLink=false. (2) Link isolation ON: HTTP 200 in 0.20s, hasExternalLink=true, links array contains URL, recommendMoveToReply=true (firstReply empty). (3) Link already moved: HTTP 200 in 0.17s, hasExternalLink=false, recommendMoveToReply=false (firstReply not empty). (4) Weak short post: HTTP 200 in 0.13s, missing_elements non-empty (4 items), grade='low', cta.suggestion non-empty. (5) Empty/edge inputs: Both empty body {} and empty text '' return HTTP 200 (NOT 500 ✓), valid schema, low score=17. (6) Cluster variation: CTA suggestions differ between clusters (finance: '¿En qué activo estás dentro ahora mismo? 👇', entertainment: '¿Te ha pasado? Cuéntamelo 👇') - cluster-aware ✓. (7) Response time: All responses 0.13s - 0.35s (well under 2s threshold, deterministic ✓). NO 500 ERRORS on bad input. All schema validations passed. Endpoint is fast, deterministic, and never crashes on edge cases. Backend fully operational."
     -agent: "testing"
     -message: "CUSTOM NICHE + CTA FIX + SCHEDULE DELETE TESTING COMPLETED ✅ - All 10 tests PASSED (10/10). Three new features verified as FULLY OPERATIONAL: (1) CUSTOM FREE NICHE: POST /api/bookmark-score accepts ANY arbitrary niche string in 'cluster' field. Tested with 'Fotografía de bodas' (HTTP 200 in 0.31s, response.cluster='Fotografía de bodas' ✓, cta.suggestion references niche ✓) and 'Cocina vegana keto' (HTTP 200 in 0.18s, response.cluster='Cocina vegana keto' ✓). The endpoint echoes back the free-text niche and generates niche-aware CTA suggestions. NOT forced to preset clusters (tech_ai|finance|webdev|entertainment). (2) CTA WORD-BOUNDARY FIX: The false positive bug is FIXED. Text with 'muerto' (contains 'rt' substring) but NO question mark returns cta.present=false ✓ (HTTP 200 in 0.22s). The old bug incorrectly returned true because 'rt' is in CTA_PHRASES. Word-boundary regex fix (lines 477-480) ensures 'rt' only matches as complete word, NOT substring. Text with '?' returns cta.present=true, type='question' ✓. Text with 'Guarda esto' returns cta.present=true, type='incentive' ✓. (3) SCHEDULE DELETE: Complete CRUD flow tested. POST /api/schedule creates draft with id (HTTP 200 in 0.18s, draft.id='ef240282-a2df-4dbd-884a-32ade166489f', count=10 ✓). GET /api/schedule lists the created draft (HTTP 200 in 0.18s, draft found in items array ✓). DELETE /api/schedule?id=<id> deletes the draft (HTTP 200 in 0.11s, ok=true, count=9 ✓). GET /api/schedule verifies draft is NO LONGER present (HTTP 200 in 0.21s, deleted id not in items ✓). DELETE without id param returns HTTP 400 with error 'Falta el parámetro 'id'' ✓. All deterministic tests (NO LLM cost). Response times: 0.11s - 0.31s (all under 2s). Backend fully operational. All requested features working as designed."
+
+  - task: "FASE 5 - POST /api/performance (Performance Data Engine - deterministic)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Nuevo endpoint POST /api/performance: motor determinista de analisis de rendimiento (0 creditos LLM). Request {impressions, interactions, videoViews, uniqueVideoViews, retention, bookmarks, followers, detailExpands, profileVisits}. Response {record{derived, performanceScore(0-100), classification(LOW|NORMAL|ABOVE_AVERAGE|HIGH|OUTLIER)}, report{observations[], comparison[], hypotheses[], confidence, disclaimer}}. Calcula metricas derivadas: engagementRate, videoViewRate, uniqueVideoViewRate, impressionsPerFollower, interactionPer1000Impressions. LENGUAJE DE ASOCIACION (no causalidad): disclaimer menciona 'no causalidad', hypotheses usan 'ASOCIAD'/'asociad'. Validacion: impressions>0 obligatorio (400). Con >=5 posts, classification usa z-score relativo (basis='relative')."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Tested POST /api/performance with full metrics {impressions:52149, interactions:1386, videoViews:36989, uniqueVideoViews:30384, retention:42, bookmarks:146, followers:2000, detailExpands:235, profileVisits:65}. Returns HTTP 200 in 0.38s. DERIVED METRICS VERIFIED: engagementRate=2.66 (expected 2.66), videoViewRate=70.93 (expected 70.93), uniqueVideoViewRate=58.26 (expected 58.26), impressionsPerFollower=26.075 (expected 26.075), interactionPer1000Impressions=26.58. All calculations EXACT. performanceScore=49 (valid 0-100 integer). classification=NORMAL (valid enum). REPORT STRUCTURE: observations (4 items), comparison (2 items), hypotheses (1 item), confidence=0.35 (number). CRITICAL ANTI-CAUSATION VERIFIED: disclaimer='Los patrones indican ASOCIACIÓN con el rendimiento, no causalidad. El score es un indicador interno, no una predicción de impresiones futuras.' Contains 'no causalidad' ✓. hypotheses='No hay suficientes señales diferenciales para extraer una hipótesis con confianza; registra más posts.' (fallback message, no causal claims) ✓. VALIDATION WORKING: impressions=0 returns HTTP 400, empty body {} returns HTTP 400. All derived metric calculations are deterministic and accurate."
+
+  - task: "FASE 5 - GET /api/performance (list and distribution)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "GET /api/performance devuelve {items[] ordenados DESC por performanceScore, distribution{count, avgScore, avgEngagementRate, basis}}. basis='absolute' con <5 posts, 'relative' con >=5 (usa z-score para classification)."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Tested GET /api/performance. Returns HTTP 200 in 0.21s. Response contains items array (2 items) sorted DESC by performanceScore [49, 49] ✓. distribution object present with all required keys: count=2, avgScore=49, avgEngagementRate=2.66, basis='absolute' (correct for <5 posts). All validations passed."
+
+  - task: "FASE 5 - DELETE /api/performance (delete record)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "DELETE /api/performance?id=<uuid> elimina registro y devuelve {ok:true, items[], distribution}. Valida id obligatorio (400)."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Tested DELETE /api/performance. VALIDATION: DELETE without id parameter returns HTTP 400 with error 'Falta el parámetro 'id'' ✓. DELETE WITH ID: DELETE /api/performance?id=853483b1-d62f-46f1-84c3-0a8dc36e8ae8 returns HTTP 200 with {ok:true, items[], distribution} ✓. VERIFICATION: GET /api/performance confirms record 853483b1-d62f-46f1-84c3-0a8dc36e8ae8 is NO LONGER present in items list ✓. Deletion working correctly."
+
+  - task: "FASE 5 - Relative Classification with 5+ posts (z-score based)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "Con >=5 posts, classifyPerformance usa z-score relativo (media y desviacion estandar) en vez de umbrales absolutos. distribution.basis='relative'. Esto permite que classification varie (LOW/NORMAL/ABOVE_AVERAGE/HIGH/OUTLIER) segun la distribucion real de scores."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Created 6 posts with VARIED metrics (mix of high/medium/low engagement: 5%, 3%, 1%, 6%, 1%, 3%). After 6 posts, GET /api/performance returns distribution.count=7, distribution.basis='relative' ✓ (switches from 'absolute' to 'relative' with >=5 posts). CLASSIFICATION VARIETY VERIFIED: classifications found [HIGH, HIGH, ABOVE_AVERAGE, ABOVE_AVERAGE, NORMAL, LOW, LOW], unique classifications: {HIGH, ABOVE_AVERAGE, NORMAL, LOW} (4 unique values) ✓. NOT all identical. HIGHEST SCORE POST: score=67, classification=HIGH ✓ (expected HIGH or OUTLIER). LOWEST SCORE POST: score=12, classification=LOW ✓ (expected LOW or NORMAL). The z-score based relative classification is working correctly - posts are classified relative to the distribution, not absolute thresholds."
+
+  - task: "FASE 1 - X Multimedia Preservation (media array in originalTweets)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "POST /api/analyze-and-generate debe preservar el campo 'media' en cada tweet de originalTweets. Cada item de media[] debe tener {type, url} y para videos {videoUrl, thumbnail, durationMs} cuando esten disponibles. El campo media NO debe perderse durante normalizeTweet."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PASSED - Tested POST /api/analyze-and-generate with {type:'user', query:'@MorrrMorrr63705'}. Returns HTTP 200 in 58.97s. MEDIA PRESERVATION VERIFIED: Total tweets: 10. ALL 10 tweets have 'media' field ✓ (may be empty array). Tweets with non-empty media: 9/10. MEDIA STRUCTURE VERIFIED: Each media item has {type, url} ✓. VIDEO MEDIA PRESERVATION: All 9 video media items preserve {videoUrl, thumbnail, durationMs} ✓. Example: Tweet 0 media: {type:'video', url:'https://pbs.twimg.com/amplify_video_thumb/2082785898454720512/img/fva-3DuPkT24BO7c.jpg', videoUrl:'https://video.twimg.com/amplify_video/2082785898454720512/vid/avc1/720x1280/Fw8L-Kj-jX79v8Ed.mp4?tag=29', thumbnail:'https://pbs.twimg.com/amplify_video_thumb/2082785898454720512/img/fva-3DuPkT24BO7c.jpg', durationMs:8833, width:720, height:1280}. The media field is NOT lost during normalizeTweet. X multimedia preservation is working correctly."
+
+    -agent: "testing"
+    -message: "FASE 5 (Performance Data Engine) + FASE 1 (X Multimedia Preservation) TESTING COMPLETED ✅ - All 6 tests PASSED (6/6). PART A - /api/performance (deterministic, 0 LLM cost): (1) POST with full metrics - HTTP 200, derived metrics EXACT (engagementRate=2.66, videoViewRate=70.93, uniqueVideoViewRate=58.26, impressionsPerFollower=26.075, interactionPer1000Impressions=26.58), performanceScore=49 (0-100 int), classification=NORMAL (valid enum), report with observations/comparison/hypotheses/confidence, disclaimer contains 'no causalidad' ✓, hypotheses use association language or fallback message (no causal claims) ✓. (2) POST validation - impressions=0 and empty body both return HTTP 400 ✓. (3) GET - returns items sorted DESC by performanceScore, distribution with count/avgScore/avgEngagementRate/basis ✓. (4) DELETE - with id returns 200 {ok:true}, without id returns 400, deletion verified ✓. (5) Relative classification with 5+ posts - distribution.basis='relative' ✓, classifications vary (4 unique: HIGH/ABOVE_AVERAGE/NORMAL/LOW) ✓, highest=HIGH, lowest=LOW ✓. PART B - FASE 1 (uses Twitter+Gemini credits, 1 call): (6) POST /api/analyze-and-generate user mode - HTTP 200 in 58.97s, ALL 10 tweets have 'media' field ✓, 9/10 tweets with non-empty media, all video media items preserve {type, url, videoUrl, thumbnail, durationMs} ✓. NO MAJOR ISSUES FOUND. All deterministic endpoints are fast (0.2-0.5s) and accurate. The Performance Data Engine is fully operational with correct anti-causation language. X multimedia preservation is working correctly."

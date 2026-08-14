@@ -15,6 +15,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetDescri
 import SocialPreview from '@/components/social-preview'
 import MediaUploader from '@/components/media-uploader'
 import BookmarkMeter from '@/components/bookmark-meter'
+import PerformancePanel from '@/components/performance-panel'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import {
@@ -478,11 +479,12 @@ export default function App() {
               </div>
 
               <Tabs value={mode} onValueChange={setMode} className="w-full">
-                <TabsList className="grid grid-cols-4 w-full mb-4">
-                  <TabsTrigger value="user" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground text-xs"><User className="h-3.5 w-3.5 mr-1" /> Usuario</TabsTrigger>
-                  <TabsTrigger value="topic" className="data-[state=active]:bg-accent data-[state=active]:text-accent-foreground text-xs"><Hash className="h-3.5 w-3.5 mr-1" /> Temática</TabsTrigger>
-                  <TabsTrigger value="media" className="data-[state=active]:bg-cyan-600 data-[state=active]:text-black text-xs"><ImageIcon className="h-3.5 w-3.5 mr-1" /> Media</TabsTrigger>
-                  <TabsTrigger value="compose" className="data-[state=active]:bg-fuchsia-600 data-[state=active]:text-white text-xs"><PenLine className="h-3.5 w-3.5 mr-1" /> Redactar</TabsTrigger>
+                <TabsList className="grid grid-cols-5 w-full mb-4">
+                  <TabsTrigger value="user" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground text-xs px-1"><User className="h-3.5 w-3.5 sm:mr-1" /><span className="hidden sm:inline">Usuario</span></TabsTrigger>
+                  <TabsTrigger value="topic" className="data-[state=active]:bg-accent data-[state=active]:text-accent-foreground text-xs px-1"><Hash className="h-3.5 w-3.5 sm:mr-1" /><span className="hidden sm:inline">Temática</span></TabsTrigger>
+                  <TabsTrigger value="media" className="data-[state=active]:bg-cyan-600 data-[state=active]:text-black text-xs px-1"><ImageIcon className="h-3.5 w-3.5 sm:mr-1" /><span className="hidden sm:inline">Media</span></TabsTrigger>
+                  <TabsTrigger value="compose" className="data-[state=active]:bg-fuchsia-600 data-[state=active]:text-white text-xs px-1"><PenLine className="h-3.5 w-3.5 sm:mr-1" /><span className="hidden sm:inline">Redactar</span></TabsTrigger>
+                  <TabsTrigger value="performance" className="data-[state=active]:bg-emerald-600 data-[state=active]:text-white text-xs px-1"><Activity className="h-3.5 w-3.5 sm:mr-1" /><span className="hidden sm:inline">Rendimiento</span></TabsTrigger>
                 </TabsList>
                 <TabsContent value="user" className="mt-0 space-y-3">
                   <Input value={userQuery} onChange={(e) => setUserQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runAnalysis()} placeholder="@usuario" className="bg-background/50 h-11" />
@@ -576,6 +578,10 @@ export default function App() {
                     <Button size="sm" variant="secondary" onClick={scheduleCompose} disabled={composeScheduling || !composeText.trim()} className="flex-1 glow-primary">{composeScheduling ? (<><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> ...</>) : (<><CalendarClock className="h-4 w-4 mr-1.5" /> Programar</>)}</Button>
                     <CopyButton text={composeReply ? `${composeText}\n\n↳ ${composeReply}` : composeText} />
                   </div>
+                </TabsContent>
+
+                <TabsContent value="performance" className="mt-0">
+                  <PerformancePanel onCountChange={() => {}} />
                 </TabsContent>
               </Tabs>
             </CardContent>

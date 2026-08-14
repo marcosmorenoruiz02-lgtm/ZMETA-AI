@@ -80,10 +80,30 @@ function extractTweetMedia(t) {
   for (const m of cands || []) {
     const type = m?.type || (m?.video_info ? 'video' : 'photo')
     const url = m?.media_url_https || m?.media_url || m?.thumbnail_url || m?.preview_image_url || m?.url
-    if (url) out.push({ type, url })
+    // mejor variante mp4 para vídeos
+    let videoUrl = null
+    const variants = m?.video_info?.variants || m?.videoInfo?.variants || []
+    if (variants.length) {
+      const mp4s = variants.filter((v) => (v?.content_type || v?.contentType) === 'video/mp4' && v?.url)
+      mp4s.sort((a, b) => (b?.bitrate || 0) - (a?.bitrate || 0))
+      videoUrl = mp4s[0]?.url || null
+    }
+    const info = m?.original_info || m?.sizes?.large || {}
+    if (url || videoUrl) {
+      out.push({
+        type,
+        url: url || null,
+        videoUrl,
+        thumbnail: m?.media_url_https || m?.preview_image_url || m?.thumbnail_url || url || null,
+        durationMs: m?.video_info?.duration_millis || m?.videoInfo?.duration_millis || null,
+        width: info?.width || m?.width || null,
+        height: info?.height || m?.height || null,
+        altText: m?.ext_alt_text || m?.altText || m?.alt_text || '',
+      })
+    }
   }
   // algunos formatos exponen mediaUrls / photoUrls planos
-  for (const u of t?.mediaUrls || t?.photoUrls || []) { if (typeof u === 'string') out.push({ type: 'photo', url: u }) }
+  for (const u of t?.mediaUrls || t?.photoUrls || []) { if (typeof u === 'string') out.push({ type: 'photo', url: u, thumbnail: u }) }
   return out
 }
 
@@ -102,6 +122,7 @@ function normalizeTweet(t, fallbackAuthor = null) {
     createdAt: t?.createdAt || '',
     lang: t?.lang || '',
     media: extractTweetMedia(t),
+    get hasMedia() { return (this.media || []).length > 0 },
     author: {
       name: author?.name || '',
       userName: author?.userName || '',
@@ -554,6 +575,137 @@ function computeBookmarkScore(text = '', cluster = 'tech_ai', hasThread = false,
 }
 
 
+// ---- FASE 5: Performance Data Engine (determinista, métricas reales introducidas por el usuario) ----
+function pnum(v) { const n = Number(v); return isNaN(n) ? 0 : Math.max(0, n) }
+function pct(a, b) { return b > 0 ? +((a / b) * 100).toFixed(2) : null }
+function avg(arr) { return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0 }
+function stddev(arr) { if (arr.length < 2) return 0; const m = avg(arr); return Math.sqrt(avg(arr.map((x) => (x - m) ** 2))) }
+
+function computeDerivedMetrics(m) {
+  const impressions = pnum(m.impressions)
+  const likes = pnum(m.likes), reposts = pnum(m.reposts), replies = pnum(m.replies), quotes = pnum(m.quotes)
+  const bookmarks = pnum(m.bookmarks), detailExpands = pnum(m.detailExpands), profileVisits = pnum(m.profileVisits)
+  const videoViews = pnum(m.videoViews), uniqueVideoViews = pnum(m.uniqueVideoViews), followers = pnum(m.followers)
+  const interactions = m.interactions != null && m.interactions !== '' ? pnum(m.interactions) : (likes + reposts + replies + quotes + bookmarks)
+  return {
+    interactions,
+    engagementRate: pct(interactions, impressions),
+    videoViewRate: pct(videoViews, impressions),
+    uniqueVideoViewRate: pct(uniqueVideoViews, impressions),
+    profileVisitRate: pct(profileVisits, impressions),
+    detailExpandRate: pct(detailExpands, impressions),
+    bookmarkRate: pct(bookmarks, impressions),
+    repostRate: pct(reposts, impressions),
+    replyRate: pct(replies, impressions),
+    interactionPer1000Impressions: impressions > 0 ? +((interactions / impressions) * 1000).toFixed(2) : null,
+    impressionsPerFollower: followers > 0 ? +((impressions / followers)).toFixed(3) : null,
+  }
+}
+
+// Score 0-100 basado en TASAS (normaliza por tamaño de forma implícita). Pesos configurables.
+function computePerformanceScore(d, retention) {
+  const parts = []
+  const add = (val, cap, w) => { if (val != null && !isNaN(val)) parts.push({ s: clamp((val / cap) * 100), w }) }
+  add(d.engagementRate, 8, 0.28)          // ~8% engagement = excelente
+  add(d.videoViewRate, 120, 0.10)         // views pueden superar impresiones
+  add(retention != null ? pnum(retention) : null, 60, 0.17) // retención % (60% = tope)
+  add(d.profileVisitRate, 2, 0.08)
+  add(d.bookmarkRate, 2, 0.09)
+  add(d.repostRate, 2, 0.08)
+  add(d.impressionsPerFollower, 5, 0.20)  // alcance relativo al tamaño de cuenta (5x = tope)
+  const tw = parts.reduce((a, p) => a + p.w, 0) || 1
+  return clamp(parts.reduce((a, p) => a + p.s * p.w, 0) / tw)
+}
+
+function classifyPerformance(score, allScores) {
+  const usable = allScores.filter((s) => typeof s === 'number')
+  if (usable.length >= 5) {
+    const m = avg(usable), sd = stddev(usable)
+    if (sd > 0) {
+      const z = (score - m) / sd
+      if (z >= 2) return 'OUTLIER'
+      if (z >= 1) return 'HIGH'
+      if (z >= 0.25) return 'ABOVE_AVERAGE'
+      if (z > -0.75) return 'NORMAL'
+      return 'LOW'
+    }
+  }
+  if (score >= 85) return 'OUTLIER'
+  if (score >= 70) return 'HIGH'
+  if (score >= 55) return 'ABOVE_AVERAGE'
+  if (score >= 35) return 'NORMAL'
+  return 'LOW'
+}
+
+async function reclassifyPerformance(database) {
+  const all = await database.collection('post_performance').find({}).toArray()
+  const scores = all.map((r) => r.performanceScore)
+  for (const r of all) {
+    const cls = classifyPerformance(r.performanceScore, scores)
+    if (cls !== r.classification) await database.collection('post_performance').updateOne({ id: r.id }, { $set: { classification: cls } })
+  }
+  const cleaned = all.map(({ _id, ...rest }) => ({ ...rest, classification: classifyPerformance(rest.performanceScore, scores) }))
+  cleaned.sort((a, b) => (b.performanceScore || 0) - (a.performanceScore || 0))
+  const engRates = cleaned.map((r) => r.derived?.engagementRate).filter((x) => x != null)
+  return {
+    items: cleaned,
+    distribution: {
+      count: cleaned.length,
+      avgScore: +avg(scores).toFixed(1),
+      maxScore: cleaned.length ? Math.max(...scores) : 0,
+      avgEngagementRate: engRates.length ? +avg(engRates).toFixed(2) : null,
+      basis: cleaned.length >= 5 ? 'relative' : 'absolute',
+    },
+  }
+}
+
+function buildPerformanceReport(rec, items, distribution) {
+  const d = rec.derived
+  const others = items.filter((r) => r.id !== rec.id)
+  const scores = items.map((r) => r.performanceScore)
+  const better = scores.filter((s) => rec.performanceScore >= s).length
+  const percentile = items.length ? Math.round((better / items.length) * 100) : 100
+  const vsAvgEng = (distribution.avgEngagementRate != null && d.engagementRate != null)
+    ? +((d.engagementRate - distribution.avgEngagementRate)).toFixed(2) : null
+
+  const observations = []
+  observations.push(`Impresiones ${pnum(rec.metrics.impressions).toLocaleString('es')} · Interacciones ${d.interactions.toLocaleString('es')} · Engagement ${d.engagementRate ?? 'n/d'}%`)
+  if (d.videoViewRate != null) observations.push(`Reproducciones ${pnum(rec.metrics.videoViews).toLocaleString('es')} (${d.videoViewRate}% de impresiones)`)
+  if (rec.metrics.retention != null && rec.metrics.retention !== '') observations.push(`Retención de vídeo declarada: ${pnum(rec.metrics.retention)}%`)
+  if (d.profileVisitRate != null) observations.push(`Visitas al perfil: ${pnum(rec.metrics.profileVisits).toLocaleString('es')} (${d.profileVisitRate}%)`)
+
+  const comparison = []
+  if (items.length >= 2) {
+    comparison.push(`Este post está en el percentil ${percentile} de tu cuenta (${items.length} posts medidos).`)
+    if (vsAvgEng != null) comparison.push(vsAvgEng >= 0
+      ? `Su engagement supera en ${vsAvgEng} puntos a la media de tu cuenta (${distribution.avgEngagementRate}%).`
+      : `Su engagement está ${Math.abs(vsAvgEng)} puntos por debajo de la media de tu cuenta (${distribution.avgEngagementRate}%).`)
+  } else {
+    comparison.push('Aún no hay suficiente histórico para una comparación relativa fiable (registra más posts).')
+  }
+
+  // Hipótesis con lenguaje de ASOCIACIÓN (nunca causalidad), con confianza según muestra
+  const confidence = items.length >= 8 ? 0.75 : items.length >= 4 ? 0.55 : 0.35
+  const hypotheses = []
+  const highRet = rec.metrics.retention != null && pnum(rec.metrics.retention) >= 50
+  if (highRet && (rec.classification === 'HIGH' || rec.classification === 'OUTLIER')) hypotheses.push('Una retención de vídeo alta APARECE ASOCIADA a este alto rendimiento (asociación, no causalidad).')
+  if (d.videoViewRate != null && d.videoViewRate >= 100 && rec.performanceScore >= 60) hypotheses.push('Un ratio de reproducciones muy alto respecto a impresiones ESTÁ ASOCIADO con mejor rendimiento en esta muestra.')
+  if (d.bookmarkRate != null && d.bookmarkRate >= 1) hypotheses.push('Una tasa de guardados elevada ESTÁ ASOCIADA con contenido de referencia/guardable.')
+  if (!hypotheses.length) hypotheses.push('No hay suficientes señales diferenciales para extraer una hipótesis con confianza; registra más posts.')
+
+  return {
+    classification: rec.classification,
+    percentile,
+    vsAverageEngagement: vsAvgEng,
+    observations,
+    comparison,
+    hypotheses,
+    confidence,
+    disclaimer: 'Los patrones indican ASOCIACIÓN con el rendimiento, no causalidad. El score es un indicador interno, no una predicción de impresiones futuras.',
+  }
+}
+
+
 // ----------------------------- Routes -----------------------------
 async function handleRoute(request, { params }) {
   const { path = [] } = await params
@@ -820,6 +972,54 @@ Devuelve ÚNICAMENTE un JSON con esta estructura EXACTA:
       await database.collection('scheduled').deleteOne({ id })
       const count = await database.collection('scheduled').countDocuments({ status: 'scheduled' })
       return handleCORS(NextResponse.json({ ok: true, count }))
+    }
+
+    // FASE 5: Performance Data Engine
+    if (route === '/performance' && method === 'POST') {
+      const body = await request.json()
+      const impressions = pnum(body?.impressions)
+      if (impressions <= 0) return handleCORS(NextResponse.json({ error: 'Las impresiones son obligatorias y deben ser > 0' }, { status: 400 }))
+      const metrics = {
+        impressions,
+        likes: pnum(body?.likes), reposts: pnum(body?.reposts), replies: pnum(body?.replies), quotes: pnum(body?.quotes),
+        bookmarks: pnum(body?.bookmarks), detailExpands: pnum(body?.detailExpands), profileVisits: pnum(body?.profileVisits),
+        videoViews: pnum(body?.videoViews), uniqueVideoViews: pnum(body?.uniqueVideoViews), followers: pnum(body?.followers),
+        interactions: (body?.interactions != null && body?.interactions !== '') ? pnum(body?.interactions) : null,
+        retention: (body?.retention != null && body?.retention !== '') ? pnum(body?.retention) : null,
+      }
+      const derived = computeDerivedMetrics(metrics)
+      const performanceScore = computePerformanceScore(derived, metrics.retention)
+      const existing = await database.collection('post_performance').find({}).toArray()
+      const classification = classifyPerformance(performanceScore, [...existing.map((r) => r.performanceScore), performanceScore])
+      const rec = {
+        id: uuidv4(),
+        postId: (body?.postId || '').trim() || null,
+        text: (body?.text || '').trim(),
+        hasVideo: !!(pnum(body?.videoViews) > 0 || body?.hasVideo),
+        metrics, derived, performanceScore, classification,
+        source: (body?.source || 'manual'),
+        measuredAt: new Date(),
+        createdAt: new Date(),
+      }
+      await database.collection('post_performance').insertOne({ ...rec })
+      const { items, distribution } = await reclassifyPerformance(database)
+      const saved = items.find((r) => r.id === rec.id) || rec
+      const report = buildPerformanceReport(saved, items, distribution)
+      return handleCORS(NextResponse.json({ record: saved, report, items, distribution }))
+    }
+
+    if (route === '/performance' && method === 'GET') {
+      const { items, distribution } = await reclassifyPerformance(database)
+      return handleCORS(NextResponse.json({ items, distribution }))
+    }
+
+    if (route === '/performance' && method === 'DELETE') {
+      const { searchParams } = new URL(request.url)
+      const id = searchParams.get('id')
+      if (!id) return handleCORS(NextResponse.json({ error: "Falta el parámetro 'id'" }, { status: 400 }))
+      await database.collection('post_performance').deleteOne({ id })
+      const { items, distribution } = await reclassifyPerformance(database)
+      return handleCORS(NextResponse.json({ ok: true, items, distribution }))
     }
 
     // Instagram: extraer metadatos + MP4 (RapidAPI 7scorp)
