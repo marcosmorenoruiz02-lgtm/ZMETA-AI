@@ -27,7 +27,7 @@ export default function BookmarkMeter({ data, loading = false, onFix, fixing = n
     <div className="rounded-2xl border border-border/60 bg-secondary/20 p-4">
       <div className="flex items-center justify-between mb-3">
         <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground font-mono">
-          <Bookmark className="h-3.5 w-3.5 text-primary" /> Bookmark Score
+          <Bookmark className="h-3.5 w-3.5 text-primary" /> Potencial de guardado
           {loading && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
         </span>
         {data && <Badge className={`border ${g.cls}`}>{g.label}</Badge>}
@@ -61,7 +61,7 @@ export default function BookmarkMeter({ data, loading = false, onFix, fixing = n
 
       {Array.isArray(data?.missing_elements) && data.missing_elements.length > 0 ? (
         <div className="mt-3">
-          <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-mono">Para subir el score · toca para arreglar con IA</span>
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-mono">Toca una sugerencia y la mejoramos</span>
           <ul className="mt-1.5 space-y-1.5">
             {data.missing_elements.map((m, i) => {
               const isFixing = fixing === m

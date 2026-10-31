@@ -13,8 +13,8 @@ function formatNum(n) {
 
 // Mockup fiel del feed nativo de X (modo oscuro)
 export default function SocialPreview({
-  name = 'Z.META',
-  handle = 'MorrrMorrr63705',
+  name = 'Tú',
+  handle = 'tu_usuario',
   avatar = '',
   verified = true,
   text = '',
