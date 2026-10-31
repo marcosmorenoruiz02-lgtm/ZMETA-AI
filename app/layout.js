@@ -5,7 +5,7 @@ import { ThemeProvider } from '@/components/theme-provider'
 export const metadata = {
   title: 'ZMETA-AI — Motor de Ingeniería Viral para X',
   description:
-    'Analiza tweets virales por perfil o temática y genera versiones optimizadas con IA (Gemini 2.5 Flash).',
+    'Analiza tweets virales por perfil o tema y redacta versiones optimizadas con Google Gemini.',
 }
 
 export default function RootLayout({ children }) {

@@ -84,7 +84,7 @@ export default function PerformancePanel({ onCountChange }) {
       if (!res.ok) { toast.error(j?.error || 'No se pudo guardar'); return }
       setItems(j.items || []); setDistribution(j.distribution || null); setReport(j.report || null)
       onCountChange && onCountChange((j.items || []).length)
-      toast.success('Métricas registradas · Performance Report generado')
+      toast.success('Métricas guardadas')
     } catch (e) { toast.error('Error al guardar métricas') } finally { setSaving(false) }
   }
 
@@ -131,7 +131,7 @@ export default function PerformancePanel({ onCountChange }) {
       {report && rec && (
         <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4">
           <div className="flex items-center justify-between mb-2">
-            <span className="inline-flex items-center gap-1.5 text-sm font-semibold"><BarChart3 className="h-4 w-4 text-primary" /> Performance Report</span>
+            <span className="inline-flex items-center gap-1.5 text-sm font-semibold"><BarChart3 className="h-4 w-4 text-primary" /> Informe de rendimiento</span>
             <Badge className={`border ${CLS[report.classification]?.cls}`}>{CLS[report.classification]?.label}</Badge>
           </div>
           <div className="flex items-end gap-3 mb-2">
@@ -141,7 +141,7 @@ export default function PerformancePanel({ onCountChange }) {
           <Progress value={rec.performanceScore} className="h-2 mb-3" />
           <div className="grid grid-cols-3 gap-2 mb-3">
             <Stat label="Engagement" value={rec.derived.engagementRate} suffix="%" />
-            <Stat label="View Rate" value={rec.derived.videoViewRate} suffix="%" />
+            <Stat label="Reproducciones" value={rec.derived.videoViewRate} suffix="%" />
             <Stat label="Imp./seguidor" value={rec.derived.impressionsPerFollower} suffix="x" />
           </div>
           <div className="space-y-1.5 mb-2">

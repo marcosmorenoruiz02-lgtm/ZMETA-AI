@@ -117,7 +117,7 @@ export default function MediaUploader({ onGenerate, loading }) {
             <span className="inline-flex items-center gap-1"><Film className="h-3.5 w-3.5" /> MP4 · MOV</span>
             <span className="inline-flex items-center gap-1"><Music className="h-3.5 w-3.5" /> MP3 · WAV</span>
           </p>
-          <p className="text-[11px] text-muted-foreground/70 mt-2">El audio de videos/clips se transcribe automáticamente (Whisper)</p>
+          <p className="text-[11px] text-muted-foreground/70 mt-2">El audio se transcribe solo. Máximo 20 MB.</p>
         </div>
       ) : (
         <div className="relative rounded-2xl overflow-hidden border border-border">
